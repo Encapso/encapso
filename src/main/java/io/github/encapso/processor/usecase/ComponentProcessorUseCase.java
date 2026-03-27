@@ -1,86 +1,78 @@
 package io.github.encapso.processor.usecase;
 
 import io.github.encapso.processor.ProcessorUtils;
-import io.github.encapso.processor.domain.FacadeGenerator;
-import io.github.encapso.processor.domain.Reporter;
-import io.github.encapso.processor.domain.ValidationContext;
-import io.github.encapso.processor.domain.ValidationRule;
+import io.github.encapso.processor.domain.*;
 
 import javax.annotation.processing.ProcessingEnvironment;
-import javax.lang.model.element.Element;
-import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.element.TypeElement;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import javax.lang.model.element.*;
+import java.util.*;
 
-/**
- * Clean Architecture Application Orchestrator. 
- * Invokes stateless validation adapters and routes to code generation if strictly successful.
- */
 public class ComponentProcessorUseCase {
 
     private final List<ValidationRule> criticalRules;
     private final List<ValidationRule> signatureRules;
-    private final FacadeGenerator generator;
+    private final FacadeGenerator facadeGenerator;
+    private final BuilderGenerator builderGenerator;
+    private final DependencyAnalyzer dependencyAnalyzer;
     private final Reporter reporter;
     private final ProcessingEnvironment env;
 
-    public ComponentProcessorUseCase(List<ValidationRule> criticalRules, 
+    public ComponentProcessorUseCase(List<ValidationRule> criticalRules,
                                      List<ValidationRule> signatureRules,
-                                     FacadeGenerator generator,
+                                     FacadeGenerator facadeGenerator,
+                                     BuilderGenerator builderGenerator,
+                                     DependencyAnalyzer dependencyAnalyzer,
                                      Reporter reporter,
                                      ProcessingEnvironment env) {
         this.criticalRules = criticalRules;
         this.signatureRules = signatureRules;
-        this.generator = generator;
+        this.facadeGenerator = facadeGenerator;
+        this.builderGenerator = builderGenerator;
+        this.dependencyAnalyzer = dependencyAnalyzer;
         this.reporter = reporter;
         this.env = env;
     }
 
     public void processComponent(TypeElement interfaceElement) {
-        boolean isComponentValid = true;
+        boolean isValid = true;
         Map<ExecutableElement, TypeElement> delegateMapping = new LinkedHashMap<>();
+        Set<TypeElement> uniqueTargetClasses = new LinkedHashSet<>();
 
         for (Element enclosed : interfaceElement.getEnclosedElements()) {
-            if (enclosed instanceof ExecutableElement methodElement) {
-                Optional<TypeElement> optTarget = ProcessorUtils.getDelegateTargetElement(methodElement, env);
-                if (optTarget.isPresent()) {
-                    TypeElement targetElement = optTarget.get();
-                    ValidationContext ctx = new ValidationContext(interfaceElement, methodElement, targetElement, env);
+            if (!(enclosed instanceof ExecutableElement methodElement)) continue;
 
-                    // 1. Base Structural Rules (Package visibility)
-                    boolean passedCritical = runRules(criticalRules, ctx);
-                    
-                    if (!passedCritical) {
-                        isComponentValid = false;
-                        continue; // Stop enforcing granular parameters if the class itself isn't structurally visible
-                    }
+            Optional<TypeElement> optTarget = ProcessorUtils.getDelegateTargetElement(methodElement, env);
+            if (optTarget.isEmpty()) continue;
 
-                    // 2. Contract Signature Rules
-                    boolean methodValid = runRules(signatureRules, ctx);
-                    
-                    if (methodValid) {
-                        delegateMapping.put(methodElement, targetElement);
-                    } else {
-                        isComponentValid = false;
-                    }
-                }
+            TypeElement target = optTarget.get();
+            ValidationContext ctx = new ValidationContext(interfaceElement, methodElement, target, env);
+
+            if (!runRules(criticalRules, ctx)) {
+                isValid = false;
+                continue;
+            }
+
+            if (runRules(signatureRules, ctx)) {
+                delegateMapping.put(methodElement, target);
+                uniqueTargetClasses.add(target);
+            } else {
+                isValid = false;
             }
         }
 
-        if (isComponentValid && !delegateMapping.isEmpty()) {
-            generator.generateFacade(interfaceElement, delegateMapping, env);
+        if (isValid && !delegateMapping.isEmpty()) {
+            String componentPackage = env.getElementUtils()
+                    .getPackageOf(interfaceElement).getQualifiedName().toString();
+            DependencyGraph graph = dependencyAnalyzer.analyze(uniqueTargetClasses, componentPackage);
+            facadeGenerator.generateFacade(interfaceElement, delegateMapping, graph, env);
+            builderGenerator.generateBuilder(interfaceElement, graph, env);
         }
     }
 
     private boolean runRules(List<ValidationRule> rules, ValidationContext ctx) {
         boolean valid = true;
         for (ValidationRule rule : rules) {
-            if (!rule.validate(ctx, reporter)) {
-                valid = false;
-            }
+            if (!rule.validate(ctx, reporter)) valid = false;
         }
         return valid;
     }

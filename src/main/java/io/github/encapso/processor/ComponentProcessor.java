@@ -1,11 +1,12 @@
 package io.github.encapso.processor;
 
 import io.github.encapso.Component;
-import io.github.encapso.processor.domain.FacadeGenerator;
 import io.github.encapso.processor.domain.Reporter;
+import io.github.encapso.processor.infrastructure.JavaPoetBuilderGenerator;
 import io.github.encapso.processor.infrastructure.JavaPoetFacadeGenerator;
 import io.github.encapso.processor.infrastructure.MessagerReporter;
 import io.github.encapso.processor.usecase.ComponentProcessorUseCase;
+import io.github.encapso.processor.usecase.DependencyAnalyzer;
 import io.github.encapso.processor.validation.BoundaryTypeVisibilityRule;
 import io.github.encapso.processor.validation.TargetClassVisibilityRule;
 import io.github.encapso.processor.validation.TargetMethodSignatureRule;
@@ -29,14 +30,13 @@ public class ComponentProcessor extends AbstractProcessor {
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         if (useCase == null) {
-            // Pure DI Container: Instantiating the Application Layer
             Reporter reporter = new MessagerReporter(processingEnv.getMessager());
-            FacadeGenerator generator = new JavaPoetFacadeGenerator();
-
             useCase = new ComponentProcessorUseCase(
                     List.of(new TargetClassVisibilityRule()),
                     List.of(new TargetMethodSignatureRule(), new BoundaryTypeVisibilityRule()),
-                    generator,
+                    new JavaPoetFacadeGenerator(),
+                    new JavaPoetBuilderGenerator(),
+                    new DependencyAnalyzer(processingEnv),
                     reporter,
                     processingEnv
             );
@@ -44,7 +44,6 @@ public class ComponentProcessor extends AbstractProcessor {
 
         for (Element element : roundEnv.getElementsAnnotatedWith(Component.class)) {
             if (element instanceof TypeElement interfaceElement) {
-                // Route core processing securely back to domain space!
                 useCase.processComponent(interfaceElement);
             }
         }
