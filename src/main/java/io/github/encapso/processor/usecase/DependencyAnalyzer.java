@@ -156,24 +156,47 @@ public class DependencyAnalyzer {
 
     private List<TypeElement> topologicalSort(Set<TypeElement> classes, Map<TypeElement, List<ParamInfo>> classToParams) {
         List<TypeElement> result = new ArrayList<>();
-        Set<TypeElement> visited = new HashSet<>();
+        Map<TypeElement, VisitState> states = new HashMap<>();
+
         for (TypeElement type : classes) {
-            topoVisit(type, classes, classToParams, visited, result);
+            topoVisit(type, classes, classToParams, states, result, new ArrayList<>());
         }
         return result;
     }
 
-    private void topoVisit(TypeElement type, Set<TypeElement> all, Map<TypeElement, List<ParamInfo>> classToParams,
-                           Set<TypeElement> visited, List<TypeElement> result) {
-        if (visited.contains(type)) return;
-        visited.add(type);
+    private void topoVisit(TypeElement type,
+                           Set<TypeElement> all,
+                           Map<TypeElement, List<ParamInfo>> classToParams,
+                           Map<TypeElement, VisitState> states,
+                           List<TypeElement> result,
+                           List<TypeElement> currentPath) {
+        VisitState state = states.getOrDefault(type, VisitState.UNVISITED);
+
+        if (state == VisitState.VISITING) {
+            // Cycle detected! Reconstruct the actual cycle path from currentPath
+            int startIndex = currentPath.indexOf(type);
+            List<TypeElement> cycle = new ArrayList<>(currentPath.subList(startIndex, currentPath.size()));
+            cycle.add(type); // close the loop for reporting
+            throw new io.github.encapso.processor.domain.CircularDependencyException(cycle);
+        }
+
+        if (state == VisitState.VISITED) return;
+
+        states.put(type, VisitState.VISITING);
+        currentPath.add(type);
+
         for (ParamInfo p : classToParams.getOrDefault(type, List.of())) {
             if (p.internal() && all.contains(p.type())) {
-                topoVisit(p.type(), all, classToParams, visited, result);
+                topoVisit(p.type(), all, classToParams, states, result, currentPath);
             }
         }
+
+        states.put(type, VisitState.VISITED);
+        currentPath.remove(currentPath.size() - 1);
         result.add(type);
     }
+
+    private enum VisitState { UNVISITED, VISITING, VISITED }
 
     private String allocateUniqueName(String simpleName, Set<String> usedNames) {
         String base = camelCase(simpleName);

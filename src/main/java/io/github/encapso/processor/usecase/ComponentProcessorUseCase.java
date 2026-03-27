@@ -49,10 +49,17 @@ public class ComponentProcessorUseCase {
         String componentPackage = env.getElementUtils()
                 .getPackageOf(interfaceElement).getQualifiedName().toString();
 
-        DependencyGraph graph = dependencyAnalyzer.analyze(metadata.targetClasses(), componentPackage);
-
-        generateArtifacts(interfaceElement, metadata.delegateMapping(), graph);
-        registerComponentBoundary(interfaceElement, componentPackage, roundEnv);
+        try {
+            DependencyGraph graph = dependencyAnalyzer.analyze(metadata.targetClasses(), componentPackage);
+            generateArtifacts(interfaceElement, metadata.delegateMapping(), graph);
+            registerComponentBoundary(interfaceElement, componentPackage, roundEnv);
+        } catch (CircularDependencyException e) {
+            String cyclePath = e.getCycle().stream()
+                    .map(te -> te.getSimpleName().toString())
+                    .reduce((a, b) -> a + " -> " + b)
+                    .orElse("");
+            reporter.error("Circular dependency detected in internal components: " + cyclePath, interfaceElement);
+        }
     }
 
     // --- Core Phases ---
