@@ -5,8 +5,7 @@ import io.github.encapso.processor.domain.Reporter;
 import io.github.encapso.processor.infrastructure.JavaPoetBuilderGenerator;
 import io.github.encapso.processor.infrastructure.JavaPoetFacadeGenerator;
 import io.github.encapso.processor.infrastructure.MessagerReporter;
-import io.github.encapso.processor.usecase.ComponentProcessorUseCase;
-import io.github.encapso.processor.usecase.DependencyAnalyzer;
+import io.github.encapso.processor.usecase.*;
 import io.github.encapso.processor.validation.BoundaryTypeVisibilityRule;
 import io.github.encapso.processor.validation.TargetClassVisibilityRule;
 import io.github.encapso.processor.validation.TargetMethodSignatureRule;
@@ -14,39 +13,56 @@ import io.github.encapso.processor.validation.TargetMethodSignatureRule;
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
-import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.TypeElement;
 import java.util.List;
 import java.util.Set;
 
-@SupportedAnnotationTypes("io.github.encapso.Component")
-@SupportedSourceVersion(SourceVersion.RELEASE_17)
+@SupportedAnnotationTypes({
+        "io.github.encapso.Component",
+        "io.github.encapso.Api"
+})
 public class ComponentProcessor extends AbstractProcessor {
 
-    private ComponentProcessorUseCase useCase;
+    private ComponentProcessorUseCase componentUseCase;
+    private ComponentBoundaryEnforcerUseCase boundaryEnforcer;
+
+    @Override
+    public SourceVersion getSupportedSourceVersion() {
+        return SourceVersion.latestSupported();
+    }
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
-        if (useCase == null) {
+        if (componentUseCase == null) {
             Reporter reporter = new MessagerReporter(processingEnv.getMessager());
-            useCase = new ComponentProcessorUseCase(
+            BoundaryRegistry registry = new BoundaryRegistry();
+
+            componentUseCase = new ComponentProcessorUseCase(
                     List.of(new TargetClassVisibilityRule()),
                     List.of(new TargetMethodSignatureRule(), new BoundaryTypeVisibilityRule()),
                     new JavaPoetFacadeGenerator(),
                     new JavaPoetBuilderGenerator(),
                     new DependencyAnalyzer(processingEnv),
+                    registry,
                     reporter,
                     processingEnv
             );
+
+            boundaryEnforcer = new ComponentBoundaryEnforcerUseCase(registry, reporter, processingEnv);
         }
 
+        // Phase 1: Process all @Component interfaces (validate + generate + register boundaries)
         for (Element element : roundEnv.getElementsAnnotatedWith(Component.class)) {
             if (element instanceof TypeElement interfaceElement) {
-                useCase.processComponent(interfaceElement);
+                componentUseCase.processComponent(interfaceElement, roundEnv);
             }
         }
+
+        // Phase 2: Enforce component boundaries across all compiled root elements
+        boundaryEnforcer.enforce(roundEnv);
+
         return true;
     }
 }

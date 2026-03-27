@@ -19,16 +19,6 @@ import java.util.*;
  *   <li>All internal instantiation steps in topological order</li>
  *   <li>The canonical instance name for each target class (for consistent naming)</li>
  * </ul>
- *
- * <p>Constructor selection rules (consistent with Spring DI):
- * <ol>
- *   <li>Single constructor → use it</li>
- *   <li>Multiple constructors → use the one with the most parameters</li>
- *   <li>Zero-arg / no-explicit constructor → instantiate directly, no external deps needed</li>
- * </ol>
- *
- * <p>A type is <em>internal</em> if it lives in the component package or a subpackage.
- * Everything else is <em>external</em> and must be supplied through the builder.
  */
 public class DependencyAnalyzer {
 
@@ -39,102 +29,166 @@ public class DependencyAnalyzer {
     }
 
     public DependencyGraph analyze(Collection<TypeElement> targetClasses, String componentPackage) {
+        // Step 1: Discover all internal classes reachable from the TCs
+        Map<TypeElement, ExecutableElement> internalToConstructor = discoverReachableInternals(targetClasses, componentPackage);
 
-        // Step 1: Recursively discover all internal classes reachable from the TCs
-        Map<TypeElement, ExecutableElement> allInternals = new LinkedHashMap<>();
+        // Step 2: Classify parameters for each internal class
+        Map<TypeElement, List<ParamInfo>> classToParams = new LinkedHashMap<>();
+        for (Map.Entry<TypeElement, ExecutableElement> entry : internalToConstructor.entrySet()) {
+            classToParams.put(entry.getKey(), classifyParameters(entry.getValue(), componentPackage));
+        }
+
+        // Step 3: Collect and name unique external dependencies
+        List<ExternalDependency> externalDependencies = collectExternalDependencies(classToParams);
+
+        // Step 4: Allocate collision-free instance names for all types
+        Map<TypeElement, String> typeToInstanceName = allocateInstanceNames(internalToConstructor.keySet(), externalDependencies);
+
+        // Step 5: Order internals topologically and build instantiation steps
+        List<InstantiationStep> steps = buildInstantiationSteps(internalToConstructor.keySet(), classToParams, typeToInstanceName);
+
+        // Step 6: Map original target classes to their canonical instance names
+        Map<TypeElement, String> targetClassToInstanceName = mapTargetClassInstanceNames(targetClasses, typeToInstanceName);
+
+        return new DependencyGraph(externalDependencies, steps, targetClassToInstanceName);
+    }
+
+    // --- Core Steps ---
+
+    private Map<TypeElement, ExecutableElement> discoverReachableInternals(Collection<TypeElement> targetClasses, String componentPackage) {
+        Map<TypeElement, ExecutableElement> discovered = new LinkedHashMap<>();
         for (TypeElement tc : targetClasses) {
-            discoverInternals(tc, componentPackage, allInternals);
+            discoverRecursively(tc, componentPackage, discovered);
         }
+        return discovered;
+    }
 
-        // Step 2: Classify each constructor parameter as internal or external
-        Map<TypeElement, List<ParamInfo>> classParams = new LinkedHashMap<>();
-        for (Map.Entry<TypeElement, ExecutableElement> entry : allInternals.entrySet()) {
-            classParams.put(entry.getKey(), classifyParams(entry.getValue(), componentPackage));
-        }
+    private void discoverRecursively(TypeElement type, String componentPackage, Map<TypeElement, ExecutableElement> discovered) {
+        if (discovered.containsKey(type) || !isInternal(type, componentPackage)) return;
 
-        // Step 3: Collect unique external deps (deduplicated by TypeElement identity)
-        LinkedHashMap<TypeElement, ExternalDependency> externalMap = new LinkedHashMap<>();
-        for (List<ParamInfo> params : classParams.values()) {
-            for (ParamInfo p : params) {
-                if (!p.internal()) {
-                    externalMap.computeIfAbsent(p.type(),
-                            t -> new ExternalDependency(t, uniqueName(t.getSimpleName().toString(), externalMap)));
+        ExecutableElement constructor = selectConstructor(type);
+        discovered.put(type, constructor);
+
+        if (constructor != null) {
+            for (VariableElement param : constructor.getParameters()) {
+                TypeElement paramType = toTypeElement(param.asType());
+                if (paramType != null) {
+                    discoverRecursively(paramType, componentPackage, discovered);
                 }
             }
         }
+    }
 
-        // Step 4: Build a collision-free name map for ALL types (external + internal)
+    private List<ExternalDependency> collectExternalDependencies(Map<TypeElement, List<ParamInfo>> classToParams) {
+        Map<TypeElement, ExternalDependency> typeToExternal = new LinkedHashMap<>();
+        for (List<ParamInfo> params : classToParams.values()) {
+            for (ParamInfo p : params) {
+                if (!p.internal()) {
+                    typeToExternal.computeIfAbsent(p.type(), t -> {
+                        String name = allocateUniqueName(t.getSimpleName().toString(), getNames(typeToExternal.values()));
+                        return new ExternalDependency(t, name);
+                    });
+                }
+            }
+        }
+        return List.copyOf(typeToExternal.values());
+    }
+
+    private Map<TypeElement, String> allocateInstanceNames(Set<TypeElement> internalClasses, List<ExternalDependency> externalDeps) {
         Map<TypeElement, String> nameMap = new LinkedHashMap<>();
-        Set<String> usedNames = new LinkedHashSet<>();
-        for (ExternalDependency dep : externalMap.values()) {
+        Set<String> usedNames = new HashSet<>();
+
+        // Register external names first
+        for (ExternalDependency dep : externalDeps) {
             nameMap.put(dep.type(), dep.paramName());
             usedNames.add(dep.paramName());
         }
-        for (TypeElement internal : allInternals.keySet()) {
-            String name = allocateName(internal.getSimpleName().toString(), usedNames);
+
+        // Allocate names for internals
+        for (TypeElement internal : internalClasses) {
+            String name = allocateUniqueName(internal.getSimpleName().toString(), usedNames);
             nameMap.put(internal, name);
             usedNames.add(name);
         }
+        return nameMap;
+    }
 
-        // Step 5: Topological sort of internal classes (dependencies before dependents)
-        List<TypeElement> sorted = topologicalSort(allInternals.keySet(), classParams);
-
-        // Step 6: Build InstantiationSteps
+    private List<InstantiationStep> buildInstantiationSteps(Set<TypeElement> internalClasses,
+                                                             Map<TypeElement, List<ParamInfo>> classToParams,
+                                                             Map<TypeElement, String> typeToInstanceName) {
+        List<TypeElement> sorted = topologicalSort(internalClasses, classToParams);
         List<InstantiationStep> steps = new ArrayList<>();
         for (TypeElement type : sorted) {
-            List<String> args = classParams.getOrDefault(type, List.of()).stream()
-                    .map(p -> nameMap.get(p.type()))
+            List<String> argNames = classToParams.getOrDefault(type, List.of()).stream()
+                    .map(p -> typeToInstanceName.get(p.type()))
                     .filter(Objects::nonNull)
                     .toList();
-            steps.add(new InstantiationStep(type, nameMap.get(type), args));
+            steps.add(new InstantiationStep(type, typeToInstanceName.get(type), argNames));
         }
+        return steps;
+    }
 
-        // Step 7: TC instance names (preserves order from targetClasses — matches FacadeImpl ctor order)
-        Map<TypeElement, String> tcInstanceNames = new LinkedHashMap<>();
+    private Map<TypeElement, String> mapTargetClassInstanceNames(Collection<TypeElement> targetClasses, Map<TypeElement, String> typeToInstanceName) {
+        Map<TypeElement, String> mapping = new LinkedHashMap<>();
         for (TypeElement tc : targetClasses) {
-            tcInstanceNames.put(tc, nameMap.getOrDefault(tc, camelCase(tc.getSimpleName().toString())));
+            mapping.put(tc, typeToInstanceName.get(tc));
         }
-
-        return new DependencyGraph(List.copyOf(externalMap.values()), steps, tcInstanceNames);
+        return mapping;
     }
 
-    // -------------------------------------------------------------------------
+    // --- Helpers ---
 
-    private void discoverInternals(TypeElement type, String componentPackage,
-                                   Map<TypeElement, ExecutableElement> discovered) {
-        if (discovered.containsKey(type)) return;
-        if (!isInternal(type, componentPackage)) return;
-
-        ExecutableElement ctor = selectConstructor(type);
-        discovered.put(type, ctor);
-
-        if (ctor != null) {
-            for (VariableElement param : ctor.getParameters()) {
-                TypeElement paramType = toTypeElement(param.asType());
-                if (paramType != null && isInternal(paramType, componentPackage)) {
-                    discoverInternals(paramType, componentPackage, discovered);
-                }
-            }
-        }
+    private List<ParamInfo> classifyParameters(ExecutableElement constructor, String componentPackage) {
+        if (constructor == null) return List.of();
+        return constructor.getParameters().stream()
+                .map(p -> toTypeElement(p.asType()))
+                .filter(Objects::nonNull)
+                .map(t -> new ParamInfo(t, isInternal(t, componentPackage)))
+                .toList();
     }
 
-    private List<ParamInfo> classifyParams(ExecutableElement ctor, String componentPackage) {
-        if (ctor == null) return List.of();
-        List<ParamInfo> result = new ArrayList<>();
-        for (VariableElement param : ctor.getParameters()) {
-            TypeElement type = toTypeElement(param.asType());
-            if (type == null) continue; // primitive — skip
-            result.add(new ParamInfo(type, isInternal(type, componentPackage)));
+    private ExecutableElement selectConstructor(TypeElement type) {
+        List<ExecutableElement> constructors = ElementFilter.constructorsIn(type.getEnclosedElements());
+        return constructors.stream()
+                .max(Comparator.comparingInt(c -> c.getParameters().size()))
+                .orElse(null);
+    }
+
+    private List<TypeElement> topologicalSort(Set<TypeElement> classes, Map<TypeElement, List<ParamInfo>> classToParams) {
+        List<TypeElement> result = new ArrayList<>();
+        Set<TypeElement> visited = new HashSet<>();
+        for (TypeElement type : classes) {
+            topoVisit(type, classes, classToParams, visited, result);
         }
         return result;
     }
 
-    private ExecutableElement selectConstructor(TypeElement type) {
-        List<ExecutableElement> ctors = ElementFilter.constructorsIn(type.getEnclosedElements());
-        if (ctors.isEmpty()) return null;
-        return ctors.stream()
-                .max(Comparator.comparingInt(c -> c.getParameters().size()))
-                .orElse(null);
+    private void topoVisit(TypeElement type, Set<TypeElement> all, Map<TypeElement, List<ParamInfo>> classToParams,
+                           Set<TypeElement> visited, List<TypeElement> result) {
+        if (visited.contains(type)) return;
+        visited.add(type);
+        for (ParamInfo p : classToParams.getOrDefault(type, List.of())) {
+            if (p.internal() && all.contains(p.type())) {
+                topoVisit(p.type(), all, classToParams, visited, result);
+            }
+        }
+        result.add(type);
+    }
+
+    private String allocateUniqueName(String simpleName, Set<String> usedNames) {
+        String base = camelCase(simpleName);
+        String current = base;
+        int counter = 1;
+        while (usedNames.contains(current)) {
+            current = base + (++counter);
+        }
+        return current;
+    }
+
+    private Set<String> getNames(Collection<ExternalDependency> deps) {
+        Set<String> names = new HashSet<>();
+        for (ExternalDependency d : deps) names.add(d.paramName());
+        return names;
     }
 
     private boolean isInternal(TypeElement type, String componentPackage) {
@@ -145,45 +199,6 @@ public class DependencyAnalyzer {
     private TypeElement toTypeElement(TypeMirror mirror) {
         if (mirror instanceof DeclaredType dt && dt.asElement() instanceof TypeElement te) return te;
         return null;
-    }
-
-    private List<TypeElement> topologicalSort(Set<TypeElement> classes,
-                                              Map<TypeElement, List<ParamInfo>> classParams) {
-        List<TypeElement> result = new ArrayList<>();
-        Set<TypeElement> visited = new HashSet<>();
-        for (TypeElement type : classes) {
-            topoVisit(type, classes, classParams, visited, result);
-        }
-        return result;
-    }
-
-    private void topoVisit(TypeElement type, Set<TypeElement> all,
-                           Map<TypeElement, List<ParamInfo>> classParams,
-                           Set<TypeElement> visited, List<TypeElement> result) {
-        if (visited.contains(type)) return;
-        visited.add(type);
-        for (ParamInfo p : classParams.getOrDefault(type, List.of())) {
-            if (p.internal() && all.contains(p.type())) {
-                topoVisit(p.type(), all, classParams, visited, result);
-            }
-        }
-        result.add(type);
-    }
-
-    private String allocateName(String simpleName, Set<String> usedNames) {
-        String base = camelCase(simpleName);
-        String name = base;
-        int counter = 1;
-        while (usedNames.contains(name)) {
-            name = base + (++counter);
-        }
-        return name;
-    }
-
-    private String uniqueName(String simpleName, Map<TypeElement, ExternalDependency> existing) {
-        Set<String> used = new HashSet<>();
-        for (ExternalDependency d : existing.values()) used.add(d.paramName());
-        return allocateName(simpleName, used);
     }
 
     private String camelCase(String name) {
