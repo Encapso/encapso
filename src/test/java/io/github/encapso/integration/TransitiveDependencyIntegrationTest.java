@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * Expected builder: BookshopFacadeBuilder.newBuilder()
  *                       .databaseGateway(db)   ← one setter only (deduped across both chains)
- *                       .emailService(email)
+ *                       .email(email)
  *                       .build()
  */
 class TransitiveDependencyIntegrationTest {
@@ -44,8 +44,8 @@ class TransitiveDependencyIntegrationTest {
         // Only external deps are visible here. BookRepository, RecommendationEngine,
         // OrderProcessor, and BookshopFacadeImpl are all hidden inside the component.
         facade = BookshopFacadeBuilder.newBuilder()
-                .databaseGateway(db)
-                .emailService(email)
+                .db(db)
+                .email(email)
                 .build();
     }
 
@@ -125,8 +125,8 @@ class TransitiveDependencyIntegrationTest {
         @DisplayName("newBuilder() should return a fluent builder that produces a valid facade")
         void shouldProduceValidFacadeFromBuilder() {
             BookshopFacade result = BookshopFacadeBuilder.newBuilder()
-                    .databaseGateway(new DatabaseGateway())
-                    .emailService(new EmailService())
+                    .db(new DatabaseGateway())
+                    .email(new EmailService())
                     .build();
 
             // build() returns the interface, not the Impl — correct type
@@ -140,9 +140,9 @@ class TransitiveDependencyIntegrationTest {
             DatabaseGateway db2 = new DatabaseGateway();
 
             BookshopFacade facade1 = BookshopFacadeBuilder.newBuilder()
-                    .databaseGateway(db1).emailService(new EmailService()).build();
+                    .db(db1).email(new EmailService()).build();
             BookshopFacade facade2 = BookshopFacadeBuilder.newBuilder()
-                    .databaseGateway(db2).emailService(new EmailService()).build();
+                    .db(db2).email(new EmailService()).build();
 
             facade1.recommend("user-A");
             facade2.recommend("user-B");

@@ -194,8 +194,8 @@ class GenericsCompilationIntegrationTest {
                 .compile(repository, service, facade);
 
         assertThat(compilation).succeeded();
-        // Here we'd ideally want to check the generated source to ensure 'genericRepository(GenericRepository<T>)'
-        // instead of 'genericRepository(GenericRepository)'
+        // Here we'd ideally want to check the generated source to ensure 'repository(GenericRepository<T>)'
+        // instead of 'repository(GenericRepository)'
     }
 
     @Test
@@ -261,7 +261,7 @@ class GenericsCompilationIntegrationTest {
                 "public class Client {",
                 "    public void test() {",
                 "        UserFacade<Implementation> facade = UserFacadeBuilder.<Implementation>newBuilder()",
-                "            .genericRepository(new GenericRepository<Implementation>())",
+                "            .repository(new GenericRepository<Implementation>())",
                 "            .build();",
                 "    }",
                 "}"

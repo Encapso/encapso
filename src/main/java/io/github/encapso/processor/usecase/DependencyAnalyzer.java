@@ -56,15 +56,15 @@ public class DependencyAnalyzer {
         // Step 3: Collect and name unique external dependencies (preserving signatures)
         List<ExternalDependency> externalDependencies = collectExternalDependencies(classToParams);
 
-        // Step 4: Allocate collision-free instance names for all types
-        // We use the raw TypeElement for naming and internal mapping
-        Map<TypeElement, String> typeToInstanceName = allocateInstanceNames(internalToConstructor.keySet(), externalDependencies);
+        // Step 4: Allocate collision-free instance names for internal classes
+        // External names are already allocated in step 3
+        Map<TypeElement, String> internalNames = allocateInternalInstanceNames(internalToConstructor.keySet(), externalDependencies);
 
         // Step 5: Order internals topologically and build instantiation steps
-        List<InstantiationStep> steps = buildInstantiationSteps(internalToConstructor.keySet(), classToParams, typeToInstanceName);
+        List<InstantiationStep> steps = buildInstantiationSteps(internalToConstructor.keySet(), classToParams, internalNames, externalDependencies);
 
         // Step 6: Map original target classes to their canonical instance names
-        Map<TypeElement, String> targetClassToInstanceName = mapTargetClassInstanceNames(targetClasses, typeToInstanceName);
+        Map<TypeElement, String> targetClassToInstanceName = mapTargetClassInstanceNames(targetClasses, internalNames);
 
         return new DependencyGraph(externalDependencies, steps, targetClassToInstanceName);
     }
@@ -96,32 +96,30 @@ public class DependencyAnalyzer {
     }
 
     private List<ExternalDependency> collectExternalDependencies(Map<TypeElement, List<ParamInfo>> classToParams) {
-        // We use TypeMirror for the signature but still deduplicate by TypeElement for naming
-        Map<TypeElement, ExternalDependency> typeToExternal = new LinkedHashMap<>();
+        // Use a composite key of (TypeElement, Name) to allow multiple instances of the same type
+        Map<String, ExternalDependency> keyToExternal = new LinkedHashMap<>();
         for (List<ParamInfo> params : classToParams.values()) {
             for (ParamInfo p : params) {
                 if (!p.internal()) {
-                    typeToExternal.computeIfAbsent(p.typeElement(), t -> {
-                        String name = allocateUniqueName(t.getSimpleName().toString(), getNames(typeToExternal.values()));
-                        return new ExternalDependency(p.typeMirror(), name, p.required(), DependencyKind.EXTERNAL);
+                    String key = p.typeElement().getQualifiedName().toString() + ":" + p.paramName();
+                    keyToExternal.computeIfAbsent(key, k -> {
+                        // The builder setter name will still be unique thanks to allocateUniqueName
+                        String builderSetterName = allocateUniqueName(p.paramName(), getNames(keyToExternal.values()));
+                        return new ExternalDependency(p.typeMirror(), builderSetterName, p.required(), DependencyKind.EXTERNAL);
                     });
                 }
             }
         }
-        return List.copyOf(typeToExternal.values());
+        return List.copyOf(keyToExternal.values());
     }
 
-    private Map<TypeElement, String> allocateInstanceNames(Set<TypeElement> internalClasses, List<ExternalDependency> externalDeps) {
+    private Map<TypeElement, String> allocateInternalInstanceNames(Set<TypeElement> internalClasses, List<ExternalDependency> externalDeps) {
         Map<TypeElement, String> nameMap = new LinkedHashMap<>();
         Set<String> usedNames = new HashSet<>();
 
-        // Register external names first
+        // Record external names to prevent collisions
         for (ExternalDependency dep : externalDeps) {
-            TypeElement te = toTypeElement(dep.type());
-            if (te != null) {
-                nameMap.put(te, dep.paramName());
-                usedNames.add(dep.paramName());
-            }
+            usedNames.add(dep.paramName());
         }
 
         // Allocate names for internals
@@ -135,15 +133,29 @@ public class DependencyAnalyzer {
 
     private List<InstantiationStep> buildInstantiationSteps(Set<TypeElement> internalClasses,
                                                              Map<TypeElement, List<ParamInfo>> classToParams,
-                                                             Map<TypeElement, String> typeToInstanceName) {
+                                                             Map<TypeElement, String> internalNames,
+                                                             List<ExternalDependency> externalDeps) {
         List<TypeElement> sorted = topologicalSort(internalClasses, classToParams);
         List<InstantiationStep> steps = new ArrayList<>();
+        
         for (TypeElement type : sorted) {
             List<String> argNames = classToParams.getOrDefault(type, List.of()).stream()
-                    .map(p -> typeToInstanceName.get(p.typeElement()))
+                    .map(p -> {
+                        if (p.internal()) {
+                            return internalNames.get(p.typeElement());
+                        } else {
+                            // Find corresponding external dependency by type and name match
+                            return externalDeps.stream()
+                                    .filter(ed -> ed.paramName().equals(p.paramName()) || ed.paramName().startsWith(p.paramName()))
+                                    .filter(ed -> ed.type().toString().equals(p.typeMirror().toString()))
+                                    .findFirst()
+                                    .map(ExternalDependency::paramName)
+                                    .orElse(null);
+                        }
+                    })
                     .filter(Objects::nonNull)
                     .toList();
-            steps.add(new InstantiationStep(type, type.asType(), typeToInstanceName.get(type), argNames));
+            steps.add(new InstantiationStep(type, type.asType(), internalNames.get(type), argNames));
         }
         return steps;
     }
@@ -169,7 +181,8 @@ public class DependencyAnalyzer {
                     boolean internal = isInternal(element, componentPackage, baseTargets);
                     boolean required = isRequired(p);
                     
-                    return new ParamInfo(element, mirror, internal, required);
+                    String name = p.getSimpleName().toString();
+                    return new ParamInfo(element, mirror, name, internal, required);
                 })
                 .filter(Objects::nonNull)
                 .toList();
@@ -267,5 +280,5 @@ public class DependencyAnalyzer {
         return Character.toLowerCase(name.charAt(0)) + name.substring(1);
     }
 
-    private record ParamInfo(TypeElement typeElement, TypeMirror typeMirror, boolean internal, boolean required) {}
+    private record ParamInfo(TypeElement typeElement, TypeMirror typeMirror, String paramName, boolean internal, boolean required) {}
 }
