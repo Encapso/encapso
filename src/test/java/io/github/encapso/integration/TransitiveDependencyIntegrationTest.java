@@ -1,5 +1,6 @@
-package io.github.encapso.integration.bookshop;
+package io.github.encapso.integration;
 
+import io.github.encapso.integration.bookshop.*;
 import io.github.encapso.integration.external.DatabaseGateway;
 import io.github.encapso.integration.external.EmailService;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *                       .emailService(email)
  *                       .build()
  */
-class BookshopIntegrationTest {
+class TransitiveDependencyIntegrationTest {
 
     private DatabaseGateway db;
     private EmailService email;

@@ -11,7 +11,7 @@ import javax.tools.JavaFileObject;
 import static com.google.testing.compile.CompilationSubject.assertThat;
 import static com.google.testing.compile.Compiler.javac;
 
-class GenericsIntegrationTest {
+class GenericsCompilationIntegrationTest {
 
     @Test
     @DisplayName("Should support generic @Component interfaces (Generic Facades)")

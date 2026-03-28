@@ -1,5 +1,6 @@
-package io.github.encapso.integration.nullsafety;
+package io.github.encapso.integration;
 
+import io.github.encapso.integration.nullsafety.*;
 import io.github.encapso.integration.external.DepA;
 import io.github.encapso.integration.external.DepB;
 import io.github.encapso.integration.external.DepC;
@@ -9,7 +10,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NullSafetyRuntimeTest {
+class NullSafetyRuntimeIntegrationTest {
 
     @Test
     @DisplayName("Setter should throw NPE for @Nonnull (javax)")

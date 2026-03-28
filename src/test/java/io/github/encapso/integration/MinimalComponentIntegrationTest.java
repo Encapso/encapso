@@ -1,10 +1,11 @@
 package io.github.encapso.integration;
 
+import io.github.encapso.integration.simple.*;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-class ComponentIntegrationTest {
+class MinimalComponentIntegrationTest {
 
     @Test
     void shouldInstantiateAndExecuteFacadeViaBuilder() {

@@ -1,5 +1,6 @@
-package io.github.encapso.integration.ecommerce;
+package io.github.encapso.integration;
 
+import io.github.encapso.integration.ecommerce.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -14,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * (all internal, zero-arg), so the builder requires no external setters.
  * Tests are now purely black-box: only the facade interface is visible.
  */
-class ECommerceIntegrationTest {
+class ServiceDelegationIntegrationTest {
 
     private ECommerceFacade facade;
 
