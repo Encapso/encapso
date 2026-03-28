@@ -1,12 +1,16 @@
 package io.github.encapso.processor.usecase;
 
+import io.github.encapso.processor.domain.BoundaryRegistry;
 import io.github.encapso.processor.domain.Reporter;
 
-import javax.annotation.processing.ProcessingEnvironment;
 import javax.annotation.processing.RoundEnvironment;
-import javax.lang.model.element.*;
+import javax.lang.model.element.Element;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.Elements;
 import javax.lang.model.util.ElementScanner14;
 
 /**
@@ -23,13 +27,13 @@ public class ComponentBoundaryEnforcerUseCase {
 
     private final BoundaryRegistry registry;
     private final Reporter reporter;
-    private final ProcessingEnvironment env;
+    private final Elements elements;
 
     public ComponentBoundaryEnforcerUseCase(BoundaryRegistry registry, Reporter reporter,
-                                             ProcessingEnvironment env) {
+                                             Elements elements) {
         this.registry = registry;
         this.reporter = reporter;
-        this.env = env;
+        this.elements = elements;
     }
 
     public void enforce(RoundEnvironment roundEnv) {
@@ -38,8 +42,7 @@ public class ComponentBoundaryEnforcerUseCase {
         BoundaryScanner scanner = new BoundaryScanner();
         for (Element rootElement : roundEnv.getRootElements()) {
             if (rootElement instanceof TypeElement typeElement) {
-                String callerPackage = env.getElementUtils()
-                        .getPackageOf(typeElement).getQualifiedName().toString();
+                String callerPackage = elements.getPackageOf(typeElement).getQualifiedName().toString();
                 scanner.scan(typeElement, callerPackage);
             }
         }
@@ -89,7 +92,7 @@ public class ComponentBoundaryEnforcerUseCase {
             if (!(mirror instanceof DeclaredType declaredType)) return;
 
             if (declaredType.asElement() instanceof TypeElement referencedType) {
-                registry.getViolatingComponentPackage(referencedType, callerPackage, env).ifPresent(componentPkg ->
+                registry.getViolatingComponentPackage(referencedType, callerPackage, elements).ifPresent(componentPkg ->
                         reporter.error(String.format(
                                 "Class '%s' is an internal implementation detail of the '%s' component. " +
                                 "It cannot be used directly outside the component. " +

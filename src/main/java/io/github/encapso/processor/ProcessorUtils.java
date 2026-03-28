@@ -2,11 +2,11 @@ package io.github.encapso.processor;
 
 import io.github.encapso.DelegateTo;
 
-import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.MirroredTypeException;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.Types;
 import java.util.Optional;
 
 public class ProcessorUtils {
@@ -16,10 +16,10 @@ public class ProcessorUtils {
      * where the target class has potentially not been loaded natively in the
      * compiler.
      */
-    public static Optional<TypeElement> getDelegateTargetElement(ExecutableElement methodElement, ProcessingEnvironment processingEnv) {
+    public static Optional<TypeElement> getDelegateTargetElement(ExecutableElement methodElement, Types types) {
         return Optional.ofNullable(methodElement.getAnnotation(DelegateTo.class))
                 .flatMap(ProcessorUtils::getTargetTypeMirror)
-                .map(typeMirror -> (TypeElement) processingEnv.getTypeUtils().asElement(typeMirror));
+                .map(typeMirror -> (TypeElement) types.asElement(typeMirror));
     }
 
     /**

@@ -1,17 +1,29 @@
 package io.github.encapso.processor.infrastructure;
 
-import com.squareup.javapoet.*;
+import com.squareup.javapoet.AnnotationSpec;
+import com.squareup.javapoet.ClassName;
+import com.squareup.javapoet.FieldSpec;
+import com.squareup.javapoet.JavaFile;
+import com.squareup.javapoet.MethodSpec;
+import com.squareup.javapoet.TypeName;
+import com.squareup.javapoet.TypeSpec;
+import com.squareup.javapoet.TypeVariableName;
 import io.github.encapso.processor.ComponentProcessor;
 import io.github.encapso.processor.domain.DependencyGraph;
 import io.github.encapso.processor.domain.FacadeGenerator;
 
+import javax.annotation.processing.Filer;
 import javax.annotation.processing.Generated;
-import javax.annotation.processing.ProcessingEnvironment;
+import javax.annotation.processing.Messager;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 import java.io.IOException;
+import javax.lang.model.type.TypeMirror;
+import java.util.List;
 import java.util.Map;
 
 public class JavaPoetFacadeGenerator implements FacadeGenerator {
@@ -20,28 +32,38 @@ public class JavaPoetFacadeGenerator implements FacadeGenerator {
     public void generateFacade(TypeElement interfaceElement,
                                Map<ExecutableElement, TypeElement> delegateMapping,
                                DependencyGraph graph,
-                               ProcessingEnvironment processingEnv) {
-        String packageName = processingEnv.getElementUtils()
-                .getPackageOf(interfaceElement).getQualifiedName().toString();
+                               Filer filer,
+                               Elements elements,
+                               Types types,
+                               Messager messager) {
+        String packageName = elements.getPackageOf(interfaceElement).getQualifiedName().toString();
         String generatedClassName = interfaceElement.getSimpleName() + "Impl";
 
-        TypeSpec classSpec = buildClass(interfaceElement, generatedClassName, delegateMapping, graph);
+        TypeSpec classSpec = buildClass(interfaceElement, generatedClassName, delegateMapping, graph, elements, types);
 
         try {
             JavaFile.builder(packageName, classSpec).indent("    ").build()
-                    .writeTo(processingEnv.getFiler());
+                    .writeTo(filer);
         } catch (IOException e) {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+            messager.printMessage(Diagnostic.Kind.ERROR,
                     "Failed to generate Facade: " + e.getMessage());
         }
     }
 
     private TypeSpec buildClass(TypeElement interfaceElement, String generatedClassName,
                                 Map<ExecutableElement, TypeElement> delegateMapping,
-                                DependencyGraph graph) {
+                                DependencyGraph graph,
+                                Elements elements,
+                                Types types) {
+        // Handle generic type variables from the interface
+        List<TypeVariableName> typeVariables = interfaceElement.getTypeParameters().stream()
+                .map(TypeVariableName::get)
+                .toList();
+
         // Package-private class — no Modifier.PUBLIC
         TypeSpec.Builder classBuilder = TypeSpec.classBuilder(generatedClassName)
                 .addModifiers(Modifier.FINAL)
+                .addTypeVariables(typeVariables)
                 .addSuperinterface(TypeName.get(interfaceElement.asType()))
                 .addAnnotation(AnnotationSpec.builder(Generated.class)
                         .addMember("value", "$S", ComponentProcessor.class.getCanonicalName())
@@ -51,8 +73,9 @@ public class JavaPoetFacadeGenerator implements FacadeGenerator {
 
         // Fields — one per unique TC, named from DependencyGraph (package-private)
         for (Map.Entry<TypeElement, String> entry : tcNames.entrySet()) {
+            ClassName fieldType = ClassName.get(entry.getKey());
             classBuilder.addField(
-                    FieldSpec.builder(TypeName.get(entry.getKey().asType()), entry.getValue())
+                    FieldSpec.builder(fieldType, entry.getValue())
                             .addModifiers(Modifier.PRIVATE, Modifier.FINAL)
                             .build());
         }
@@ -60,31 +83,104 @@ public class JavaPoetFacadeGenerator implements FacadeGenerator {
         // Package-private constructor — takes TCs in graph order
         MethodSpec.Builder ctor = MethodSpec.constructorBuilder(); // no Modifier.PUBLIC
         for (Map.Entry<TypeElement, String> entry : tcNames.entrySet()) {
-            ctor.addParameter(TypeName.get(entry.getKey().asType()), entry.getValue());
+            ClassName paramType = ClassName.get(entry.getKey());
+            ctor.addParameter(paramType, entry.getValue());
             ctor.addStatement("this.$N = $N", entry.getValue(), entry.getValue());
         }
         classBuilder.addMethod(ctor.build());
 
         // Delegate methods
-        for (Map.Entry<ExecutableElement, TypeElement> entry : delegateMapping.entrySet()) {
-            ExecutableElement method = entry.getKey();
-            String fieldName = tcNames.get(entry.getValue());
+        javax.lang.model.type.DeclaredType owner = (javax.lang.model.type.DeclaredType) interfaceElement.asType();
 
-            MethodSpec.Builder methodBuilder = MethodSpec.overriding(method);
-            StringBuilder args = new StringBuilder();
-            for (int i = 0; i < method.getParameters().size(); i++) {
-                if (i > 0) args.append(", ");
-                args.append(method.getParameters().get(i).getSimpleName());
+        for (Map.Entry<ExecutableElement, TypeElement> entry : delegateMapping.entrySet()) {
+            ExecutableElement facadeMethod = entry.getKey();
+            TypeElement targetElement = entry.getValue();
+            String fieldName = tcNames.get(targetElement);
+
+            // Find the matching target method again to get its parameter types for casting
+            ExecutableElement targetMethod = findMatchingTargetMethod(facadeMethod, targetElement);
+            
+            // overriding(ExecutableElement, DeclaredType, Types) handles type substitution
+            MethodSpec.Builder methodBuilder = MethodSpec.overriding(facadeMethod, owner, types);
+            
+            javax.lang.model.type.ExecutableType resolvedSource = (javax.lang.model.type.ExecutableType) types.asMemberOf(owner, facadeMethod);
+            javax.lang.model.type.ExecutableType resolvedTarget = (javax.lang.model.type.ExecutableType) types.asMemberOf((javax.lang.model.type.DeclaredType) targetElement.asType(), targetMethod);
+
+            List<Object> args = new java.util.ArrayList<>();
+            StringBuilder format = new StringBuilder();
+            
+            for (int i = 0; i < facadeMethod.getParameters().size(); i++) {
+                if (i > 0) format.append(", ");
+                
+                TypeMirror sourceParamType = resolvedSource.getParameterTypes().get(i);
+                TypeMirror targetParamType = resolvedTarget.getParameterTypes().get(i);
+
+                if (types.isSameType(sourceParamType, targetParamType)) {
+                    format.append("$N");
+                    args.add(facadeMethod.getParameters().get(i).getSimpleName());
+                } else {
+                    format.append("($T) $N");
+                    args.add(TypeName.get(types.erasure(targetParamType)));
+                    args.add(facadeMethod.getParameters().get(i).getSimpleName());
+                }
             }
 
-            if (method.getReturnType().getKind().name().equals("VOID")) {
-                methodBuilder.addStatement("this.$N.$N($L)", fieldName, method.getSimpleName(), args);
+            if (facadeMethod.getReturnType().getKind().name().equals("VOID")) {
+                List<Object> statementArgs = new java.util.ArrayList<>();
+                statementArgs.add(fieldName);
+                statementArgs.add(facadeMethod.getSimpleName());
+                statementArgs.addAll(args);
+                methodBuilder.addStatement("this.$N.$N(" + format + ")", statementArgs.toArray());
             } else {
-                methodBuilder.addStatement("return this.$N.$N($L)", fieldName, method.getSimpleName(), args);
+                TypeName facadeReturnType = TypeName.get(resolvedSource.getReturnType());
+                TypeName targetReturnType = TypeName.get(resolvedTarget.getReturnType());
+
+                List<Object> statementArgs = new java.util.ArrayList<>();
+                String stmtFormat;
+
+                // Even if types are "equal", we need a cast if the return type involves type variables
+                // because the delegate field is raw, so the result of the call will be the erasure.
+                if (facadeReturnType.equals(targetReturnType) && !containsTypeVariable(targetReturnType)) {
+                    stmtFormat = "return this.$N.$N(" + format + ")";
+                } else {
+                    stmtFormat = "return ($T) this.$N.$N(" + format + ")";
+                    statementArgs.add(facadeReturnType);
+
+                    // If we are casting to a type variable, we need to suppress unchecked warnings
+                    if (containsTypeVariable(facadeReturnType)) {
+                        methodBuilder.addAnnotation(AnnotationSpec.builder(SuppressWarnings.class)
+                                .addMember("value", "$S", "unchecked")
+                                .build());
+                    }
+                }
+                statementArgs.add(fieldName);
+                statementArgs.add(facadeMethod.getSimpleName());
+                statementArgs.addAll(args);
+
+                methodBuilder.addStatement(stmtFormat, statementArgs.toArray());
             }
             classBuilder.addMethod(methodBuilder.build());
         }
 
         return classBuilder.build();
+    }
+
+    private boolean containsTypeVariable(TypeName typeName) {
+        return JavaPoetUtils.containsTypeVariable(typeName);
+    }
+
+    private ExecutableElement findMatchingTargetMethod(ExecutableElement source, TypeElement target) {
+        // This mirrors the logic in TargetMethodSignatureRule but returns the element
+        for (javax.lang.model.element.Element enclosed : target.getEnclosedElements()) {
+            if (enclosed instanceof ExecutableElement targetMethod) {
+                if (targetMethod.getSimpleName().equals(source.getSimpleName()) &&
+                    targetMethod.getParameters().size() == source.getParameters().size()) {
+                    // In a more complex scenario, we'd check types here too, 
+                    // but we assume the validation phase already filtered this.
+                    return targetMethod;
+                }
+            }
+        }
+        throw new IllegalStateException("Matching target method not found for: " + source);
     }
 }

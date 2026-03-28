@@ -19,6 +19,7 @@ After finishing a feature or fix:
 4. Wait for explicit commit approval before running `git commit`.
 5. After committing, inform the user: _"Committed locally. Ready to push to `develop` — shall I?"_
 6. Wait for explicit push approval before running `git push`.
+7. Before pushing to `develop`, all related not pushed commits must be squased together into one meaningful commit which describes the feature that is delivered with that commit.
 
 ## Merging to Main
 - Only merge `develop` → `main` via a Pull Request on GitHub.

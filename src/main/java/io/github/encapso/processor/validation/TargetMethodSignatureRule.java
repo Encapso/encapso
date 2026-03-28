@@ -6,7 +6,6 @@ import io.github.encapso.processor.domain.ValidationRule;
 
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeMirror;
 import java.util.List;
 
@@ -38,32 +37,39 @@ public class TargetMethodSignatureRule implements ValidationRule {
     private boolean isMethodSignatureMatch(ExecutableElement sourceMethod, ExecutableElement targetMethod, ValidationContext context) {
         if (!targetMethod.getSimpleName().equals(sourceMethod.getSimpleName())) return false;
 
-        if (!context.processingEnv().getTypeUtils().isSameType(sourceMethod.getReturnType(), targetMethod.getReturnType())) {
+        javax.lang.model.util.Types types = context.types();
+
+        // Resolve both source (facade) and target in their respective contexts (handling type variable substitution)
+        javax.lang.model.type.DeclaredType sourceOwner = (javax.lang.model.type.DeclaredType) context.interfaceElement().asType();
+        javax.lang.model.type.DeclaredType targetOwner = (javax.lang.model.type.DeclaredType) context.targetElement().asType();
+
+        javax.lang.model.type.ExecutableType resolvedSource = (javax.lang.model.type.ExecutableType)
+                types.asMemberOf(sourceOwner, sourceMethod);
+        javax.lang.model.type.ExecutableType resolvedTarget = (javax.lang.model.type.ExecutableType)
+                types.asMemberOf(targetOwner, targetMethod);
+
+        if (!isTypeCompatible(resolvedSource.getReturnType(), resolvedTarget.getReturnType(), types)) {
             return false;
         }
 
-        List<? extends VariableElement> sourceParams = sourceMethod.getParameters();
-        List<? extends VariableElement> targetParams = targetMethod.getParameters();
+        List<? extends TypeMirror> sourceParams = resolvedSource.getParameterTypes();
+        List<? extends TypeMirror> targetParams = resolvedTarget.getParameterTypes();
 
         if (sourceParams.size() != targetParams.size()) return false;
 
         for (int i = 0; i < sourceParams.size(); i++) {
-            TypeMirror sourceParamType = sourceParams.get(i).asType();
-            TypeMirror targetParamType = targetParams.get(i).asType();
-            if (!context.processingEnv().getTypeUtils().isSameType(sourceParamType, targetParamType)) {
+            if (!isTypeCompatible(sourceParams.get(i), targetParams.get(i), types)) {
                 return false;
             }
         }
 
-        List<? extends TypeMirror> sourceThrows = sourceMethod.getThrownTypes();
-        List<? extends TypeMirror> targetThrows = targetMethod.getThrownTypes();
+        List<? extends TypeMirror> sourceThrows = resolvedSource.getThrownTypes();
+        List<? extends TypeMirror> targetThrows = resolvedTarget.getThrownTypes();
 
-        if (sourceThrows.size() != targetThrows.size()) return false;
-
-        for (TypeMirror sourceThrow : sourceThrows) {
+        for (TypeMirror targetThrow : targetThrows) {
             boolean found = false;
-            for (TypeMirror targetThrow : targetThrows) {
-                if (context.processingEnv().getTypeUtils().isSameType(sourceThrow, targetThrow)) {
+            for (TypeMirror sourceThrow : sourceThrows) {
+                if (types.isAssignable(targetThrow, sourceThrow)) {
                     found = true;
                     break;
                 }
@@ -72,5 +78,25 @@ public class TargetMethodSignatureRule implements ValidationRule {
         }
 
         return true;
+    }
+
+    private boolean isTypeCompatible(TypeMirror src, TypeMirror target, javax.lang.model.util.Types types) {
+        if (types.isSameType(src, target)) return true;
+
+        // If erasures match, we can bridge them with casts in the generated implementation.
+        // This is crucial for handling complex generics and wildcards (? super T).
+        if (types.isSameType(types.erasure(src), types.erasure(target))) {
+            return true;
+        }
+
+        // Lenient matching for generics: if one is a TypeVariable, allow if it's assignable
+        // to/from the other's erasure. 
+        if (src.getKind() == javax.lang.model.type.TypeKind.TYPEVAR || 
+            target.getKind() == javax.lang.model.type.TypeKind.TYPEVAR) {
+            return types.isAssignable(src, types.erasure(target))
+                || types.isAssignable(target, types.erasure(src));
+        }
+
+        return false;
     }
 }

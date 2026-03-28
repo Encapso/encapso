@@ -5,12 +5,16 @@ import io.github.encapso.processor.domain.Reporter;
 import io.github.encapso.processor.infrastructure.JavaPoetBuilderGenerator;
 import io.github.encapso.processor.infrastructure.JavaPoetFacadeGenerator;
 import io.github.encapso.processor.infrastructure.MessagerReporter;
-import io.github.encapso.processor.usecase.*;
+import io.github.encapso.processor.domain.BoundaryRegistry;
+import io.github.encapso.processor.usecase.ComponentBoundaryEnforcerUseCase;
+import io.github.encapso.processor.usecase.ComponentProcessorUseCase;
+import io.github.encapso.processor.usecase.DependencyAnalyzer;
 import io.github.encapso.processor.validation.BoundaryTypeVisibilityRule;
 import io.github.encapso.processor.validation.TargetClassVisibilityRule;
 import io.github.encapso.processor.validation.TargetMethodSignatureRule;
 
 import javax.annotation.processing.AbstractProcessor;
+import javax.annotation.processing.ProcessingEnvironment;
 import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.lang.model.SourceVersion;
@@ -29,30 +33,43 @@ public class ComponentProcessor extends AbstractProcessor {
     private ComponentBoundaryEnforcerUseCase boundaryEnforcer;
 
     @Override
+    public synchronized void init(ProcessingEnvironment processingEnv) {
+        super.init(processingEnv);
+
+        javax.lang.model.util.Elements elements = processingEnv.getElementUtils();
+        javax.lang.model.util.Types types = processingEnv.getTypeUtils();
+        javax.annotation.processing.Filer filer = processingEnv.getFiler();
+        javax.annotation.processing.Messager messager = processingEnv.getMessager();
+
+        Reporter reporter = new MessagerReporter(messager);
+        BoundaryRegistry registry = new BoundaryRegistry();
+
+        DependencyAnalyzer dependencyAnalyzer = new DependencyAnalyzer(elements, types);
+
+        this.componentUseCase = new ComponentProcessorUseCase(
+                List.of(new TargetClassVisibilityRule()),
+                List.of(new TargetMethodSignatureRule(), new BoundaryTypeVisibilityRule()),
+                new JavaPoetFacadeGenerator(),
+                new JavaPoetBuilderGenerator(),
+                dependencyAnalyzer,
+                registry,
+                reporter,
+                filer,
+                elements,
+                types,
+                messager
+        );
+
+        this.boundaryEnforcer = new ComponentBoundaryEnforcerUseCase(registry, reporter, elements);
+    }
+
+    @Override
     public SourceVersion getSupportedSourceVersion() {
         return SourceVersion.latestSupported();
     }
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
-        if (componentUseCase == null) {
-            Reporter reporter = new MessagerReporter(processingEnv.getMessager());
-            BoundaryRegistry registry = new BoundaryRegistry();
-
-            componentUseCase = new ComponentProcessorUseCase(
-                    List.of(new TargetClassVisibilityRule()),
-                    List.of(new TargetMethodSignatureRule(), new BoundaryTypeVisibilityRule()),
-                    new JavaPoetFacadeGenerator(),
-                    new JavaPoetBuilderGenerator(),
-                    new DependencyAnalyzer(processingEnv),
-                    registry,
-                    reporter,
-                    processingEnv
-            );
-
-            boundaryEnforcer = new ComponentBoundaryEnforcerUseCase(registry, reporter, processingEnv);
-        }
-
         // Phase 1: Process all @Component interfaces (validate + generate + register boundaries)
         for (Element element : roundEnv.getElementsAnnotatedWith(Component.class)) {
             if (element instanceof TypeElement interfaceElement) {

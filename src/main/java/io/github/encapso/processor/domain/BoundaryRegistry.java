@@ -1,7 +1,7 @@
-package io.github.encapso.processor.usecase;
+package io.github.encapso.processor.domain;
 
-import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.util.Elements;
 import java.util.*;
 
 /**
@@ -33,9 +33,9 @@ public class BoundaryRegistry {
      * Returns empty if the reference is legal.
      */
     public Optional<String> getViolatingComponentPackage(TypeElement referencedType, String callerPackage,
-                                                         ProcessingEnvironment env) {
+                                                         Elements elements) {
         String refQName = referencedType.getQualifiedName().toString();
-        String refPkg = env.getElementUtils().getPackageOf(referencedType).getQualifiedName().toString();
+        String refPkg = elements.getPackageOf(referencedType).getQualifiedName().toString();
 
         for (Map.Entry<String, Set<String>> entry : componentPackageToAllowed.entrySet()) {
             String componentPkg = entry.getKey();

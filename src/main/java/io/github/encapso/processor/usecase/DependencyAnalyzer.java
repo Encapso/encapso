@@ -4,12 +4,24 @@ import io.github.encapso.processor.domain.DependencyGraph;
 import io.github.encapso.processor.domain.DependencyGraph.ExternalDependency;
 import io.github.encapso.processor.domain.DependencyGraph.InstantiationStep;
 
-import javax.annotation.processing.ProcessingEnvironment;
-import javax.lang.model.element.*;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
-import java.util.*;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * Recursively analyses the constructor dependency tree of all target classes.
@@ -22,26 +34,28 @@ import java.util.*;
  */
 public class DependencyAnalyzer {
 
-    private final ProcessingEnvironment env;
+    private final Elements elements;
 
-    public DependencyAnalyzer(ProcessingEnvironment env) {
-        this.env = env;
+    public DependencyAnalyzer(Elements elements, Types types) {
+        this.elements = elements;
     }
 
-    public DependencyGraph analyze(Collection<TypeElement> targetClasses, String componentPackage) {
+    public DependencyGraph analyze(TypeElement componentInterface, Collection<TypeElement> targetClasses, String componentPackage) {
+        Set<TypeElement> baseTargets = new HashSet<>(targetClasses);
         // Step 1: Discover all internal classes reachable from the TCs
-        Map<TypeElement, ExecutableElement> internalToConstructor = discoverReachableInternals(targetClasses, componentPackage);
+        Map<TypeElement, ExecutableElement> internalToConstructor = discoverReachableInternals(baseTargets, componentPackage);
 
-        // Step 2: Classify parameters for each internal class
+        // Step 2: Classify parameters for each internal class (context-aware)
         Map<TypeElement, List<ParamInfo>> classToParams = new LinkedHashMap<>();
         for (Map.Entry<TypeElement, ExecutableElement> entry : internalToConstructor.entrySet()) {
-            classToParams.put(entry.getKey(), classifyParameters(entry.getValue(), componentPackage));
+            classToParams.put(entry.getKey(), classifyParameters(entry.getValue(), componentPackage, baseTargets));
         }
 
-        // Step 3: Collect and name unique external dependencies
+        // Step 3: Collect and name unique external dependencies (preserving signatures)
         List<ExternalDependency> externalDependencies = collectExternalDependencies(classToParams);
 
         // Step 4: Allocate collision-free instance names for all types
+        // We use the raw TypeElement for naming and internal mapping
         Map<TypeElement, String> typeToInstanceName = allocateInstanceNames(internalToConstructor.keySet(), externalDependencies);
 
         // Step 5: Order internals topologically and build instantiation steps
@@ -55,16 +69,16 @@ public class DependencyAnalyzer {
 
     // --- Core Steps ---
 
-    private Map<TypeElement, ExecutableElement> discoverReachableInternals(Collection<TypeElement> targetClasses, String componentPackage) {
+    private Map<TypeElement, ExecutableElement> discoverReachableInternals(Set<TypeElement> baseTargets, String componentPackage) {
         Map<TypeElement, ExecutableElement> discovered = new LinkedHashMap<>();
-        for (TypeElement tc : targetClasses) {
-            discoverRecursively(tc, componentPackage, discovered);
+        for (TypeElement tc : baseTargets) {
+            discoverRecursively(tc, componentPackage, baseTargets, discovered);
         }
         return discovered;
     }
 
-    private void discoverRecursively(TypeElement type, String componentPackage, Map<TypeElement, ExecutableElement> discovered) {
-        if (discovered.containsKey(type) || !isInternal(type, componentPackage)) return;
+    private void discoverRecursively(TypeElement type, String componentPackage, Set<TypeElement> baseTargets, Map<TypeElement, ExecutableElement> discovered) {
+        if (discovered.containsKey(type) || !isInternal(type, componentPackage, baseTargets)) return;
 
         ExecutableElement constructor = selectConstructor(type);
         discovered.put(type, constructor);
@@ -73,20 +87,21 @@ public class DependencyAnalyzer {
             for (VariableElement param : constructor.getParameters()) {
                 TypeElement paramType = toTypeElement(param.asType());
                 if (paramType != null) {
-                    discoverRecursively(paramType, componentPackage, discovered);
+                    discoverRecursively(paramType, componentPackage, baseTargets, discovered);
                 }
             }
         }
     }
 
     private List<ExternalDependency> collectExternalDependencies(Map<TypeElement, List<ParamInfo>> classToParams) {
+        // We use TypeMirror for the signature but still deduplicate by TypeElement for naming
         Map<TypeElement, ExternalDependency> typeToExternal = new LinkedHashMap<>();
         for (List<ParamInfo> params : classToParams.values()) {
             for (ParamInfo p : params) {
                 if (!p.internal()) {
-                    typeToExternal.computeIfAbsent(p.type(), t -> {
+                    typeToExternal.computeIfAbsent(p.typeElement(), t -> {
                         String name = allocateUniqueName(t.getSimpleName().toString(), getNames(typeToExternal.values()));
-                        return new ExternalDependency(t, name);
+                        return new ExternalDependency(p.typeMirror(), name);
                     });
                 }
             }
@@ -100,8 +115,11 @@ public class DependencyAnalyzer {
 
         // Register external names first
         for (ExternalDependency dep : externalDeps) {
-            nameMap.put(dep.type(), dep.paramName());
-            usedNames.add(dep.paramName());
+            TypeElement te = toTypeElement(dep.type());
+            if (te != null) {
+                nameMap.put(te, dep.paramName());
+                usedNames.add(dep.paramName());
+            }
         }
 
         // Allocate names for internals
@@ -120,10 +138,10 @@ public class DependencyAnalyzer {
         List<InstantiationStep> steps = new ArrayList<>();
         for (TypeElement type : sorted) {
             List<String> argNames = classToParams.getOrDefault(type, List.of()).stream()
-                    .map(p -> typeToInstanceName.get(p.type()))
+                    .map(p -> typeToInstanceName.get(p.typeElement()))
                     .filter(Objects::nonNull)
                     .toList();
-            steps.add(new InstantiationStep(type, typeToInstanceName.get(type), argNames));
+            steps.add(new InstantiationStep(type, type.asType(), typeToInstanceName.get(type), argNames));
         }
         return steps;
     }
@@ -138,12 +156,15 @@ public class DependencyAnalyzer {
 
     // --- Helpers ---
 
-    private List<ParamInfo> classifyParameters(ExecutableElement constructor, String componentPackage) {
+    private List<ParamInfo> classifyParameters(ExecutableElement constructor, String componentPackage, Set<TypeElement> baseTargets) {
         if (constructor == null) return List.of();
         return constructor.getParameters().stream()
-                .map(p -> toTypeElement(p.asType()))
+                .map(p -> {
+                    TypeMirror mirror = p.asType();
+                    TypeElement element = toTypeElement(mirror);
+                    return element != null ? new ParamInfo(element, mirror, isInternal(element, componentPackage, baseTargets)) : null;
+                })
                 .filter(Objects::nonNull)
-                .map(t -> new ParamInfo(t, isInternal(t, componentPackage)))
                 .toList();
     }
 
@@ -186,8 +207,8 @@ public class DependencyAnalyzer {
         currentPath.add(type);
 
         for (ParamInfo p : classToParams.getOrDefault(type, List.of())) {
-            if (p.internal() && all.contains(p.type())) {
-                topoVisit(p.type(), all, classToParams, states, result, currentPath);
+            if (p.internal() && all.contains(p.typeElement())) {
+                topoVisit(p.typeElement(), all, classToParams, states, result, currentPath);
             }
         }
 
@@ -214,9 +235,15 @@ public class DependencyAnalyzer {
         return names;
     }
 
-    private boolean isInternal(TypeElement type, String componentPackage) {
-        String pkg = env.getElementUtils().getPackageOf(type).getQualifiedName().toString();
-        return pkg.equals(componentPackage) || pkg.startsWith(componentPackage + ".");
+    private boolean isInternal(TypeElement type, String componentPackage, Set<TypeElement> baseTargets) {
+        if (baseTargets.contains(type)) return true;
+        
+        String pkg = elements.getPackageOf(type).getQualifiedName().toString();
+        boolean inPackage = pkg.equals(componentPackage) || pkg.startsWith(componentPackage + ".");
+        
+        // Non-primary targets are only internal if they are in the same package AND are not generic.
+        // We can't auto-manage generic classes because we don't know the type parameters to use during 'new'.
+        return inPackage && type.getTypeParameters().isEmpty();
     }
 
     private TypeElement toTypeElement(TypeMirror mirror) {
@@ -229,5 +256,5 @@ public class DependencyAnalyzer {
         return Character.toLowerCase(name.charAt(0)) + name.substring(1);
     }
 
-    private record ParamInfo(TypeElement type, boolean internal) {}
+    private record ParamInfo(TypeElement typeElement, TypeMirror typeMirror, boolean internal) {}
 }

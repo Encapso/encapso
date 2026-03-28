@@ -1,6 +1,7 @@
 package io.github.encapso.processor.domain;
 
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.TypeMirror;
 import java.util.List;
 import java.util.Map;
 
@@ -14,11 +15,12 @@ public record DependencyGraph(
         Map<TypeElement, String> tcInstanceNames
 ) {
     /** A dependency that must be supplied externally via the builder. */
-    public record ExternalDependency(TypeElement type, String paramName) {}
+    public record ExternalDependency(TypeMirror type, String paramName) {}
 
     /** One instantiation step in topological order inside build(). */
     public record InstantiationStep(
             TypeElement type,
+            TypeMirror targetType,
             String instanceName,
             List<String> constructorArgs
     ) {}

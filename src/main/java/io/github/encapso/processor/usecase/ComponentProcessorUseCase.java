@@ -1,17 +1,38 @@
 package io.github.encapso.processor.usecase;
 
 import io.github.encapso.processor.ProcessorUtils;
-import io.github.encapso.processor.domain.*;
+import io.github.encapso.processor.domain.BoundaryRegistry;
+import io.github.encapso.processor.domain.BuilderGenerator;
+import io.github.encapso.processor.domain.CircularDependencyException;
+import io.github.encapso.processor.domain.DependencyGraph;
+import io.github.encapso.processor.domain.FacadeGenerator;
+import io.github.encapso.processor.domain.Reporter;
+import io.github.encapso.processor.domain.ValidationContext;
+import io.github.encapso.processor.domain.ValidationRule;
 
-import javax.annotation.processing.ProcessingEnvironment;
-import javax.lang.model.element.*;
+import javax.annotation.processing.Filer;
+import javax.annotation.processing.Messager;
+import javax.annotation.processing.RoundEnvironment;
+import javax.lang.model.element.Element;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
-import java.util.*;
+import javax.lang.model.type.WildcardType;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * Orchestrates the processing of a single @Component interface.
- * Validates the interface structure, resolves dependencies, and triggers generation.
+ * Validates the interface structure, resolves dependencies, and triggers
+ * generation.
  */
 public class ComponentProcessorUseCase {
 
@@ -22,16 +43,22 @@ public class ComponentProcessorUseCase {
     private final DependencyAnalyzer dependencyAnalyzer;
     private final BoundaryRegistry boundaryRegistry;
     private final Reporter reporter;
-    private final ProcessingEnvironment env;
+    private final Filer filer;
+    private final Elements elements;
+    private final Types types;
+    private final Messager messager;
 
     public ComponentProcessorUseCase(List<ValidationRule> criticalRules,
-                                     List<ValidationRule> signatureRules,
-                                     FacadeGenerator facadeGenerator,
-                                     BuilderGenerator builderGenerator,
-                                     DependencyAnalyzer dependencyAnalyzer,
-                                     BoundaryRegistry boundaryRegistry,
-                                     Reporter reporter,
-                                     ProcessingEnvironment env) {
+            List<ValidationRule> signatureRules,
+            FacadeGenerator facadeGenerator,
+            BuilderGenerator builderGenerator,
+            DependencyAnalyzer dependencyAnalyzer,
+            BoundaryRegistry boundaryRegistry,
+            Reporter reporter,
+            Filer filer,
+            Elements elements,
+            Types types,
+            Messager messager) {
         this.criticalRules = criticalRules;
         this.signatureRules = signatureRules;
         this.facadeGenerator = facadeGenerator;
@@ -39,18 +66,22 @@ public class ComponentProcessorUseCase {
         this.dependencyAnalyzer = dependencyAnalyzer;
         this.boundaryRegistry = boundaryRegistry;
         this.reporter = reporter;
-        this.env = env;
+        this.filer = filer;
+        this.elements = elements;
+        this.types = types;
+        this.messager = messager;
     }
 
-    public void processComponent(TypeElement interfaceElement, javax.annotation.processing.RoundEnvironment roundEnv) {
+    public void processComponent(TypeElement interfaceElement, RoundEnvironment roundEnv) {
         ComponentMetadata metadata = collectComponentMetadata(interfaceElement);
-        if (!metadata.isValid() || metadata.delegateMapping().isEmpty()) return;
+        if (!metadata.isValid() || metadata.delegateMapping().isEmpty())
+            return;
 
-        String componentPackage = env.getElementUtils()
-                .getPackageOf(interfaceElement).getQualifiedName().toString();
+        String componentPackage = elements.getPackageOf(interfaceElement).getQualifiedName().toString();
 
         try {
-            DependencyGraph graph = dependencyAnalyzer.analyze(metadata.targetClasses(), componentPackage);
+            DependencyGraph graph = dependencyAnalyzer.analyze(interfaceElement, metadata.targetClasses(),
+                    componentPackage);
             generateArtifacts(interfaceElement, metadata.delegateMapping(), graph);
             registerComponentBoundary(interfaceElement, componentPackage, roundEnv);
         } catch (CircularDependencyException e) {
@@ -71,10 +102,11 @@ public class ComponentProcessorUseCase {
 
         for (Element enclosed : interfaceElement.getEnclosedElements()) {
             if (enclosed instanceof ExecutableElement method) {
-                Optional<TypeElement> target = ProcessorUtils.getDelegateTargetElement(method, env);
-                if (target.isEmpty()) continue;
+                Optional<TypeElement> target = ProcessorUtils.getDelegateTargetElement(method, types);
+                if (target.isEmpty())
+                    continue;
 
-                ValidationContext ctx = new ValidationContext(interfaceElement, method, target.get(), env);
+                ValidationContext ctx = new ValidationContext(interfaceElement, method, target.get(), elements, types);
 
                 if (!runRules(criticalRules, ctx)) {
                     isValid = false;
@@ -92,12 +124,14 @@ public class ComponentProcessorUseCase {
         return new ComponentMetadata(isValid, delegateMapping, uniqueTargetClasses);
     }
 
-    private void generateArtifacts(TypeElement interfaceElement, Map<ExecutableElement, TypeElement> mapping, DependencyGraph graph) {
-        facadeGenerator.generateFacade(interfaceElement, mapping, graph, env);
-        builderGenerator.generateBuilder(interfaceElement, graph, env);
+    private void generateArtifacts(TypeElement interfaceElement, Map<ExecutableElement, TypeElement> mapping,
+            DependencyGraph graph) {
+        facadeGenerator.generateFacade(interfaceElement, mapping, graph, filer, elements, types, messager);
+        builderGenerator.generateBuilder(interfaceElement, graph, filer, elements, types, messager);
     }
 
-    private void registerComponentBoundary(TypeElement interfaceElement, String componentPackage, javax.annotation.processing.RoundEnvironment roundEnv) {
+    private void registerComponentBoundary(TypeElement interfaceElement, String componentPackage,
+            RoundEnvironment roundEnv) {
         Set<String> allowedTypes = new LinkedHashSet<>();
 
         // The interface and its generated builder are always allowed
@@ -115,11 +149,11 @@ public class ComponentProcessorUseCase {
 
         // --- NEW: Collect types explicitly annotated with @Api in the same package tree ---
         // Find the Api annotation type element
-        TypeElement apiAnnotation = env.getElementUtils().getTypeElement("io.github.encapso.Api");
+        TypeElement apiAnnotation = elements.getTypeElement("io.github.encapso.Api");
         if (apiAnnotation != null) {
             for (Element apiElement : roundEnv.getElementsAnnotatedWith(apiAnnotation)) {
                 if (apiElement instanceof TypeElement te) {
-                    String tePackage = env.getElementUtils().getPackageOf(te).getQualifiedName().toString();
+                    String tePackage = elements.getPackageOf(te).getQualifiedName().toString();
                     if (tePackage.startsWith(componentPackage)) {
                         allowedTypes.add(te.getQualifiedName().toString());
                     }
@@ -135,7 +169,8 @@ public class ComponentProcessorUseCase {
     private boolean runRules(List<ValidationRule> rules, ValidationContext ctx) {
         boolean valid = true;
         for (ValidationRule rule : rules) {
-            if (!rule.validate(ctx, reporter)) valid = false;
+            if (!rule.validate(ctx, reporter))
+                valid = false;
         }
         return valid;
     }
@@ -144,12 +179,19 @@ public class ComponentProcessorUseCase {
         if (mirror instanceof DeclaredType dt && dt.asElement() instanceof TypeElement te) {
             allowed.add(te.getQualifiedName().toString());
             dt.getTypeArguments().forEach(arg -> collectSignatureTypes(arg, allowed));
+        } else if (mirror instanceof WildcardType wt) {
+            if (wt.getExtendsBound() != null)
+                collectSignatureTypes(wt.getExtendsBound(), allowed);
+            if (wt.getSuperBound() != null)
+                collectSignatureTypes(wt.getSuperBound(), allowed);
+        } else if (mirror instanceof ArrayType at) {
+            collectSignatureTypes(at.getComponentType(), allowed);
         }
     }
 
     private record ComponentMetadata(
             boolean isValid,
             Map<ExecutableElement, TypeElement> delegateMapping,
-            Set<TypeElement> targetClasses
-    ) {}
+            Set<TypeElement> targetClasses) {
+    }
 }

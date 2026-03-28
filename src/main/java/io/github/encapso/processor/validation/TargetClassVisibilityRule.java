@@ -10,8 +10,8 @@ public class TargetClassVisibilityRule implements ValidationRule {
 
     @Override
     public boolean validate(ValidationContext context, Reporter reporter) {
-        String interfacePkg = context.processingEnv().getElementUtils().getPackageOf(context.interfaceElement()).getQualifiedName().toString();
-        String targetPkg = context.processingEnv().getElementUtils().getPackageOf(context.targetElement()).getQualifiedName().toString();
+        String interfacePkg = context.elements().getPackageOf(context.interfaceElement()).getQualifiedName().toString();
+        String targetPkg = context.elements().getPackageOf(context.targetElement()).getQualifiedName().toString();
 
         boolean isInsideComponent = targetPkg.equals(interfacePkg) || targetPkg.startsWith(interfacePkg + ".");
 
