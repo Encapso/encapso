@@ -16,10 +16,18 @@ public class ProcessorUtils {
      * where the target class has potentially not been loaded natively in the
      * compiler.
      */
-    public static Optional<TypeElement> getDelegateTargetElement(ExecutableElement methodElement, Types types) {
-        return Optional.ofNullable(methodElement.getAnnotation(DelegateTo.class))
-                .flatMap(ProcessorUtils::getTargetTypeMirror)
-                .map(typeMirror -> (TypeElement) types.asElement(typeMirror));
+    public record DelegateRequest(TypeElement target, String factoryMethod) {}
+
+    /**
+     * Extracts the delegation request (target class + optional factory method) securely.
+     */
+    public static Optional<DelegateRequest> getDelegateRequest(ExecutableElement methodElement, Types types) {
+        DelegateTo annotation = methodElement.getAnnotation(DelegateTo.class);
+        if (annotation == null) return Optional.empty();
+
+        return getTargetTypeMirror(annotation)
+                .map(typeMirror -> (TypeElement) types.asElement(typeMirror))
+                .map(target -> new DelegateRequest(target, annotation.factoryMethod()));
     }
 
     /**

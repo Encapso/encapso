@@ -42,10 +42,10 @@ public class DependencyAnalyzer {
         this.annotationMatcher = new AnnotationMatcher();
     }
 
-    public DependencyGraph analyze(TypeElement componentInterface, Collection<TypeElement> targetClasses, String componentPackage) {
-        Set<TypeElement> baseTargets = new HashSet<>(targetClasses);
+    public DependencyGraph analyze(TypeElement componentInterface, Map<TypeElement, String> targetToFactory, String componentPackage) {
+        Set<TypeElement> baseTargets = targetToFactory.keySet();
         // Step 1: Discover all internal classes reachable from the TCs
-        Map<TypeElement, ExecutableElement> internalToConstructor = discoverReachableInternals(baseTargets, componentPackage);
+        Map<TypeElement, ExecutableElement> internalToConstructor = discoverReachableInternals(targetToFactory, componentPackage, baseTargets);
 
         // Step 2: Classify parameters for each internal class (context-aware)
         Map<TypeElement, List<ParamInfo>> classToParams = new LinkedHashMap<>();
@@ -61,35 +61,37 @@ public class DependencyAnalyzer {
         Map<TypeElement, String> internalNames = allocateInternalInstanceNames(internalToConstructor.keySet(), externalDependencies);
 
         // Step 5: Order internals topologically and build instantiation steps
-        List<InstantiationStep> steps = buildInstantiationSteps(internalToConstructor.keySet(), classToParams, internalNames, externalDependencies);
+        List<InstantiationStep> steps = buildInstantiationSteps(internalToConstructor.keySet(), classToParams, internalNames, externalDependencies, targetToFactory);
 
-        // Step 6: Map original target classes to their canonical instance names
-        Map<TypeElement, String> targetClassToInstanceName = mapTargetClassInstanceNames(targetClasses, internalNames);
+        // 6. Map original target classes to their canonical instance names
+        Map<TypeElement, String> targetClassToInstanceName = mapTargetClassInstanceNames(targetToFactory.keySet(), internalNames);
 
         return new DependencyGraph(externalDependencies, steps, targetClassToInstanceName);
     }
 
     // --- Core Steps ---
 
-    private Map<TypeElement, ExecutableElement> discoverReachableInternals(Set<TypeElement> baseTargets, String componentPackage) {
+    private Map<TypeElement, ExecutableElement> discoverReachableInternals(Map<TypeElement, String> targetToFactory, String componentPackage, Set<TypeElement> baseTargets) {
         Map<TypeElement, ExecutableElement> discovered = new LinkedHashMap<>();
         for (TypeElement tc : baseTargets) {
-            discoverRecursively(tc, componentPackage, baseTargets, discovered);
+            String factoryMethod = targetToFactory.get(tc);
+            discoverRecursively(tc, factoryMethod, componentPackage, baseTargets, discovered);
         }
         return discovered;
     }
 
-    private void discoverRecursively(TypeElement type, String componentPackage, Set<TypeElement> baseTargets, Map<TypeElement, ExecutableElement> discovered) {
+    private void discoverRecursively(TypeElement type, String factoryMethod, String componentPackage, Set<TypeElement> baseTargets, Map<TypeElement, ExecutableElement> discovered) {
         if (discovered.containsKey(type) || !isInternal(type, componentPackage, baseTargets)) return;
 
-        ExecutableElement constructor = selectConstructor(type);
-        discovered.put(type, constructor);
+        ExecutableElement instantiationPoint = selectInstantiationPoint(type, factoryMethod);
+        discovered.put(type, instantiationPoint);
 
-        if (constructor != null) {
-            for (VariableElement param : constructor.getParameters()) {
+        if (instantiationPoint != null) {
+            for (VariableElement param : instantiationPoint.getParameters()) {
                 TypeElement paramType = toTypeElement(param.asType());
                 if (paramType != null) {
-                    discoverRecursively(paramType, componentPackage, baseTargets, discovered);
+                    // Internal dependencies (transitive) currently always use constructors (factoryMethod = null)
+                    discoverRecursively(paramType, null, componentPackage, baseTargets, discovered);
                 }
             }
         }
@@ -134,11 +136,13 @@ public class DependencyAnalyzer {
     private List<InstantiationStep> buildInstantiationSteps(Set<TypeElement> internalClasses,
                                                              Map<TypeElement, List<ParamInfo>> classToParams,
                                                              Map<TypeElement, String> internalNames,
-                                                             List<ExternalDependency> externalDeps) {
+                                                             List<ExternalDependency> externalDeps,
+                                                             Map<TypeElement, String> targetToFactory) {
         List<TypeElement> sorted = topologicalSort(internalClasses, classToParams);
         List<InstantiationStep> steps = new ArrayList<>();
         
         for (TypeElement type : sorted) {
+            String factoryMethod = targetToFactory.get(type);
             List<String> argNames = classToParams.getOrDefault(type, List.of()).stream()
                     .map(p -> {
                         if (p.internal()) {
@@ -155,7 +159,7 @@ public class DependencyAnalyzer {
                     })
                     .filter(Objects::nonNull)
                     .toList();
-            steps.add(new InstantiationStep(type, type.asType(), internalNames.get(type), argNames));
+            steps.add(new InstantiationStep(type, type.asType(), internalNames.get(type), argNames, factoryMethod));
         }
         return steps;
     }
@@ -192,11 +196,22 @@ public class DependencyAnalyzer {
         return annotationMatcher.isNonNull(param);
     }
 
-    private ExecutableElement selectConstructor(TypeElement type) {
-        List<ExecutableElement> constructors = ElementFilter.constructorsIn(type.getEnclosedElements());
-        return constructors.stream()
-                .max(Comparator.comparingInt(c -> c.getParameters().size()))
-                .orElse(null);
+    private ExecutableElement selectInstantiationPoint(TypeElement type, String factoryMethodName) {
+        if (factoryMethodName == null || factoryMethodName.isEmpty()) {
+            List<ExecutableElement> constructors = ElementFilter.constructorsIn(type.getEnclosedElements());
+            return constructors.stream()
+                    .max(Comparator.comparingInt(c -> c.getParameters().size()))
+                    .orElse(null);
+        }
+
+        // Search for static factory method
+        return ElementFilter.methodsIn(type.getEnclosedElements()).stream()
+                .filter(m -> m.getSimpleName().toString().equals(factoryMethodName))
+                .filter(m -> m.getModifiers().contains(javax.lang.model.element.Modifier.STATIC))
+                .max(Comparator.comparingInt(m -> m.getParameters().size()))
+                .orElseThrow(() -> new IllegalArgumentException(
+                        String.format("Static factory method '%s' not found in class %s",
+                                factoryMethodName, type.getQualifiedName())));
     }
 
     private List<TypeElement> topologicalSort(Set<TypeElement> classes, Map<TypeElement, List<ParamInfo>> classToParams) {

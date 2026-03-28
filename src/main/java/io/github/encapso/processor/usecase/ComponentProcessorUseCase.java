@@ -82,7 +82,7 @@ public class ComponentProcessorUseCase {
         String componentPackage = elements.getPackageOf(interfaceElement).getQualifiedName().toString();
 
         try {
-            DependencyGraph graph = dependencyAnalyzer.analyze(interfaceElement, metadata.targetClasses(),
+            DependencyGraph graph = dependencyAnalyzer.analyze(interfaceElement, metadata.targetToFactory(),
                     componentPackage);
             generateArtifacts(interfaceElement, metadata.delegateMapping(), graph);
             registerComponentBoundary(interfaceElement, componentPackage, roundEnv);
@@ -99,6 +99,7 @@ public class ComponentProcessorUseCase {
 
     private ComponentMetadata collectComponentMetadata(TypeElement interfaceElement) {
         Map<ExecutableElement, TypeElement> delegateMapping = new LinkedHashMap<>();
+        Map<TypeElement, String> targetToFactory = new LinkedHashMap<>();
         Set<TypeElement> uniqueTargetClasses = new LinkedHashSet<>();
         boolean isValid = true;
 
@@ -113,11 +114,14 @@ public class ComponentProcessorUseCase {
         // 2. Method-level Validation
         for (Element enclosed : interfaceElement.getEnclosedElements()) {
             if (enclosed instanceof ExecutableElement method) {
-                Optional<TypeElement> target = ProcessorUtils.getDelegateTargetElement(method, types);
-                if (target.isEmpty())
+                Optional<io.github.encapso.processor.ProcessorUtils.DelegateRequest> request = 
+                        io.github.encapso.processor.ProcessorUtils.getDelegateRequest(method, types);
+                
+                if (request.isEmpty())
                     continue;
 
-                ValidationContext ctx = new ValidationContext(interfaceElement, method, target.get(), elements, types);
+                TypeElement target = request.get().target();
+                ValidationContext ctx = new ValidationContext(interfaceElement, method, target, elements, types);
 
                 // Run critical rules that are NOT component-level (method-level critical rules)
                 if (!runRules(criticalRules.stream()
@@ -128,14 +132,15 @@ public class ComponentProcessorUseCase {
                 }
 
                 if (runRules(signatureRules, ctx)) {
-                    delegateMapping.put(method, target.get());
-                    uniqueTargetClasses.add(target.get());
+                    delegateMapping.put(method, target);
+                    targetToFactory.put(target, request.get().factoryMethod());
+                    uniqueTargetClasses.add(target);
                 } else {
                     isValid = false;
                 }
             }
         }
-        return new ComponentMetadata(isValid, delegateMapping, uniqueTargetClasses);
+        return new ComponentMetadata(isValid, delegateMapping, targetToFactory, uniqueTargetClasses);
     }
 
     private void generateArtifacts(TypeElement interfaceElement, Map<ExecutableElement, TypeElement> mapping,
@@ -207,6 +212,7 @@ public class ComponentProcessorUseCase {
     private record ComponentMetadata(
             boolean isValid,
             Map<ExecutableElement, TypeElement> delegateMapping,
+            Map<TypeElement, String> targetToFactory,
             Set<TypeElement> targetClasses) {
     }
 }

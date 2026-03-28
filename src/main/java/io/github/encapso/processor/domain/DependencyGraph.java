@@ -28,6 +28,7 @@ public record DependencyGraph(
             TypeElement type,
             TypeMirror targetType,
             String instanceName,
-            List<String> constructorArgs
+            List<String> constructorArgs,
+            String factoryMethod
     ) {}
 }

@@ -127,7 +127,11 @@ public class JavaPoetBuilderGenerator implements BuilderGenerator {
             // Use raw types for internals to avoid unresolvable T scope issues in the builder's local variables
             ClassName stepType = ClassName.get(step.type());
             String args = String.join(", ", step.constructorArgs());
-            build.addStatement("$T $L = new $T($L)", stepType, step.instanceName(), stepType, args);
+            if (step.factoryMethod() != null && !step.factoryMethod().isEmpty()) {
+                build.addStatement("$T $L = $T.$L($L)", stepType, step.instanceName(), stepType, step.factoryMethod(), args);
+            } else {
+                build.addStatement("$T $L = new $T($L)", stepType, step.instanceName(), stepType, args);
+            }
         }
 
         String tcArgs = String.join(", ", graph.tcInstanceNames().values());
