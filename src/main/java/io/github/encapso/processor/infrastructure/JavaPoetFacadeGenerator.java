@@ -12,13 +12,10 @@ import io.github.encapso.processor.ComponentProcessor;
 import io.github.encapso.processor.domain.DependencyGraph;
 import io.github.encapso.processor.domain.FacadeGenerator;
 
-import javax.annotation.processing.Filer;
 import javax.annotation.processing.Generated;
-import javax.annotation.processing.Messager;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
-import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 import java.io.IOException;
@@ -31,30 +28,26 @@ public class JavaPoetFacadeGenerator implements FacadeGenerator {
     @Override
     public void generateFacade(TypeElement interfaceElement,
                                Map<ExecutableElement, TypeElement> delegateMapping,
-                               DependencyGraph graph,
-                               Filer filer,
-                               Elements elements,
-                               Types types,
-                               Messager messager) {
-        String packageName = elements.getPackageOf(interfaceElement).getQualifiedName().toString();
+                               GeneratorContext context) {
+        String packageName = context.getPackageName(interfaceElement);
         String generatedClassName = interfaceElement.getSimpleName() + "Impl";
 
-        TypeSpec classSpec = buildClass(interfaceElement, generatedClassName, delegateMapping, graph, elements, types);
+        TypeSpec classSpec = buildClass(interfaceElement, generatedClassName, delegateMapping, context);
 
         try {
             JavaFile.builder(packageName, classSpec).indent("    ").build()
-                    .writeTo(filer);
+                    .writeTo(context.filer());
         } catch (IOException e) {
-            messager.printMessage(Diagnostic.Kind.ERROR,
+            context.messager().printMessage(Diagnostic.Kind.ERROR,
                     "Failed to generate Facade: " + e.getMessage());
         }
     }
 
     private TypeSpec buildClass(TypeElement interfaceElement, String generatedClassName,
                                 Map<ExecutableElement, TypeElement> delegateMapping,
-                                DependencyGraph graph,
-                                Elements elements,
-                                Types types) {
+                                GeneratorContext context) {
+        DependencyGraph graph = context.graph();
+        Types types = context.types();
         // Handle generic type variables from the interface
         List<TypeVariableName> typeVariables = interfaceElement.getTypeParameters().stream()
                 .map(TypeVariableName::get)

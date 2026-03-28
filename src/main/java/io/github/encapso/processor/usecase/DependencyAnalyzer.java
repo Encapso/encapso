@@ -1,6 +1,7 @@
 package io.github.encapso.processor.usecase;
 
 import io.github.encapso.processor.domain.DependencyGraph;
+import io.github.encapso.processor.domain.DependencyGraph.DependencyKind;
 import io.github.encapso.processor.domain.DependencyGraph.ExternalDependency;
 import io.github.encapso.processor.domain.DependencyGraph.InstantiationStep;
 
@@ -11,7 +12,6 @@ import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
-import javax.lang.model.util.Types;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -35,9 +35,11 @@ import java.util.Set;
 public class DependencyAnalyzer {
 
     private final Elements elements;
+    private final AnnotationMatcher annotationMatcher;
 
-    public DependencyAnalyzer(Elements elements, Types types) {
+    public DependencyAnalyzer(Elements elements) {
         this.elements = elements;
+        this.annotationMatcher = new AnnotationMatcher();
     }
 
     public DependencyGraph analyze(TypeElement componentInterface, Collection<TypeElement> targetClasses, String componentPackage) {
@@ -101,7 +103,7 @@ public class DependencyAnalyzer {
                 if (!p.internal()) {
                     typeToExternal.computeIfAbsent(p.typeElement(), t -> {
                         String name = allocateUniqueName(t.getSimpleName().toString(), getNames(typeToExternal.values()));
-                        return new ExternalDependency(p.typeMirror(), name);
+                        return new ExternalDependency(p.typeMirror(), name, p.required(), DependencyKind.EXTERNAL);
                     });
                 }
             }
@@ -162,10 +164,19 @@ public class DependencyAnalyzer {
                 .map(p -> {
                     TypeMirror mirror = p.asType();
                     TypeElement element = toTypeElement(mirror);
-                    return element != null ? new ParamInfo(element, mirror, isInternal(element, componentPackage, baseTargets)) : null;
+                    if (element == null) return null;
+                    
+                    boolean internal = isInternal(element, componentPackage, baseTargets);
+                    boolean required = isRequired(p);
+                    
+                    return new ParamInfo(element, mirror, internal, required);
                 })
                 .filter(Objects::nonNull)
                 .toList();
+    }
+
+    private boolean isRequired(VariableElement param) {
+        return annotationMatcher.isNonNull(param);
     }
 
     private ExecutableElement selectConstructor(TypeElement type) {
@@ -256,5 +267,5 @@ public class DependencyAnalyzer {
         return Character.toLowerCase(name.charAt(0)) + name.substring(1);
     }
 
-    private record ParamInfo(TypeElement typeElement, TypeMirror typeMirror, boolean internal) {}
+    private record ParamInfo(TypeElement typeElement, TypeMirror typeMirror, boolean internal, boolean required) {}
 }

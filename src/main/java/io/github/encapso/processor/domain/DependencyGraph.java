@@ -14,8 +14,14 @@ public record DependencyGraph(
         List<InstantiationStep> instantiationSteps,
         Map<TypeElement, String> tcInstanceNames
 ) {
+    /** The source of a dependency (where it comes from). */
+    public enum DependencyKind {
+        EXTERNAL, // Provided via builder
+        INTERNAL   // Managed by the processor
+    }
+
     /** A dependency that must be supplied externally via the builder. */
-    public record ExternalDependency(TypeMirror type, String paramName) {}
+    public record ExternalDependency(TypeMirror type, String paramName, boolean required, DependencyKind kind) {}
 
     /** One instantiation step in topological order inside build(). */
     public record InstantiationStep(

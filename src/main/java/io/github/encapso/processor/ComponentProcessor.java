@@ -44,7 +44,7 @@ public class ComponentProcessor extends AbstractProcessor {
         Reporter reporter = new MessagerReporter(messager);
         BoundaryRegistry registry = new BoundaryRegistry();
 
-        DependencyAnalyzer dependencyAnalyzer = new DependencyAnalyzer(elements, types);
+        DependencyAnalyzer dependencyAnalyzer = new DependencyAnalyzer(elements);
 
         this.componentUseCase = new ComponentProcessorUseCase(
                 List.of(new TargetClassVisibilityRule()),

@@ -9,6 +9,7 @@ import io.github.encapso.processor.domain.FacadeGenerator;
 import io.github.encapso.processor.domain.Reporter;
 import io.github.encapso.processor.domain.ValidationContext;
 import io.github.encapso.processor.domain.ValidationRule;
+import io.github.encapso.processor.infrastructure.GeneratorContext;
 
 import javax.annotation.processing.Filer;
 import javax.annotation.processing.Messager;
@@ -126,8 +127,9 @@ public class ComponentProcessorUseCase {
 
     private void generateArtifacts(TypeElement interfaceElement, Map<ExecutableElement, TypeElement> mapping,
             DependencyGraph graph) {
-        facadeGenerator.generateFacade(interfaceElement, mapping, graph, filer, elements, types, messager);
-        builderGenerator.generateBuilder(interfaceElement, graph, filer, elements, types, messager);
+        GeneratorContext context = new GeneratorContext(filer, elements, types, messager, graph);
+        facadeGenerator.generateFacade(interfaceElement, mapping, context);
+        builderGenerator.generateBuilder(interfaceElement, context);
     }
 
     private void registerComponentBoundary(TypeElement interfaceElement, String componentPackage,

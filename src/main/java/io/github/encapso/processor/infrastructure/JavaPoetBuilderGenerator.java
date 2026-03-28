@@ -15,13 +15,9 @@ import io.github.encapso.processor.domain.DependencyGraph;
 import io.github.encapso.processor.domain.DependencyGraph.ExternalDependency;
 import io.github.encapso.processor.domain.DependencyGraph.InstantiationStep;
 
-import javax.annotation.processing.Filer;
 import javax.annotation.processing.Generated;
-import javax.annotation.processing.Messager;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
-import javax.lang.model.util.Elements;
-import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 import java.io.IOException;
 import java.util.Map;
@@ -31,31 +27,27 @@ import java.util.Map;
 public class JavaPoetBuilderGenerator implements BuilderGenerator {
 
     @Override
-    public void generateBuilder(TypeElement interfaceElement,
-                                DependencyGraph graph,
-                                Filer filer,
-                                Elements elements,
-                                Types types,
-                                Messager messager) {
-        String packageName = elements.getPackageOf(interfaceElement).getQualifiedName().toString();
+    public void generateBuilder(TypeElement interfaceElement, GeneratorContext context) {
+        String packageName = context.getPackageName(interfaceElement);
         String interfaceName = interfaceElement.getSimpleName().toString();
         String builderName = interfaceName + "Builder";
         String implName = interfaceName + "Impl";
 
-        TypeSpec builderClass = buildClass(interfaceElement, builderName, implName, graph, packageName);
+        TypeSpec builderClass = buildClass(interfaceElement, builderName, implName, context, packageName);
 
         try {
             JavaFile javaFile = JavaFile.builder(packageName, builderClass).indent("    ").build();
-            messager.printMessage(Diagnostic.Kind.NOTE, "GENERATED BUILDER:\n" + javaFile.toString());
-            javaFile.writeTo(filer);
+            context.messager().printMessage(Diagnostic.Kind.NOTE, "GENERATED BUILDER:\n" + javaFile.toString());
+            javaFile.writeTo(context.filer());
         } catch (IOException e) {
-            messager.printMessage(Diagnostic.Kind.ERROR,
+            context.messager().printMessage(Diagnostic.Kind.ERROR,
                     "Failed to generate ComponentBuilder: " + e.getMessage());
         }
     }
 
     private TypeSpec buildClass(TypeElement interfaceElement, String builderName, String implName,
-                                DependencyGraph graph, String packageName) {
+                                GeneratorContext context, String packageName) {
+        DependencyGraph graph = context.graph();
         // Handle generic type variables from the interface - preserve bounds for the class declaration
         java.util.List<TypeVariableName> typeVariables = interfaceElement.getTypeParameters().stream()
                 .map(TypeVariableName::get)
@@ -102,19 +94,34 @@ public class JavaPoetBuilderGenerator implements BuilderGenerator {
             ClassName depTypeRaw = ClassName.get(te);
             
             cls.addField(FieldSpec.builder(depTypeRaw, dep.paramName(), Modifier.PRIVATE).build());
-            cls.addMethod(MethodSpec.methodBuilder(dep.paramName())
+            MethodSpec.Builder setter = MethodSpec.methodBuilder(dep.paramName())
                     .addModifiers(Modifier.PUBLIC)
                     .returns(builderType)
-                    .addParameter(depTypeGeneric, dep.paramName())
-                    .addStatement("this.$N = $N", dep.paramName(), dep.paramName())
-                    .addStatement("return this")
-                    .build());
+                    .addParameter(depTypeGeneric, dep.paramName());
+
+            if (dep.required()) {
+                setter.addStatement("this.$N = $T.requireNonNull($N, $S)",
+                        dep.paramName(), java.util.Objects.class, dep.paramName(),
+                        "'" + dep.paramName() + "' must not be null");
+            } else {
+                setter.addStatement("this.$N = $N", dep.paramName(), dep.paramName());
+            }
+
+            cls.addMethod(setter.addStatement("return this").build());
         }
 
         // build() — topologically ordered instantiation, returns the interface type
         MethodSpec.Builder build = MethodSpec.methodBuilder("build")
                 .addModifiers(Modifier.PUBLIC)
                 .returns(interfaceType);
+
+        for (ExternalDependency dep : graph.externalDependencies()) {
+            if (dep.required()) {
+                build.addStatement("$T.requireNonNull($N, $S)",
+                        java.util.Objects.class, dep.paramName(),
+                        "Required dependency '" + dep.paramName() + "' was not provided to the builder");
+            }
+        }
 
         for (InstantiationStep step : graph.instantiationSteps()) {
             // Use raw types for internals to avoid unresolvable T scope issues in the builder's local variables
