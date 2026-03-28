@@ -10,6 +10,7 @@ import io.github.encapso.processor.usecase.ComponentBoundaryEnforcerUseCase;
 import io.github.encapso.processor.usecase.ComponentProcessorUseCase;
 import io.github.encapso.processor.usecase.DependencyAnalyzer;
 import io.github.encapso.processor.validation.BoundaryTypeVisibilityRule;
+import io.github.encapso.processor.validation.ComponentInterfaceHierarchyRule;
 import io.github.encapso.processor.validation.TargetClassVisibilityRule;
 import io.github.encapso.processor.validation.TargetMethodSignatureRule;
 
@@ -47,7 +48,7 @@ public class ComponentProcessor extends AbstractProcessor {
         DependencyAnalyzer dependencyAnalyzer = new DependencyAnalyzer(elements);
 
         this.componentUseCase = new ComponentProcessorUseCase(
-                List.of(new TargetClassVisibilityRule()),
+                List.of(new TargetClassVisibilityRule(), new ComponentInterfaceHierarchyRule()),
                 List.of(new TargetMethodSignatureRule(), new BoundaryTypeVisibilityRule()),
                 new JavaPoetFacadeGenerator(),
                 new JavaPoetBuilderGenerator(),

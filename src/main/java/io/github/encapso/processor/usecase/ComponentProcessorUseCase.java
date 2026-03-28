@@ -9,6 +9,7 @@ import io.github.encapso.processor.domain.FacadeGenerator;
 import io.github.encapso.processor.domain.Reporter;
 import io.github.encapso.processor.domain.ValidationContext;
 import io.github.encapso.processor.domain.ValidationRule;
+import io.github.encapso.processor.validation.ComponentInterfaceHierarchyRule;
 import io.github.encapso.processor.infrastructure.GeneratorContext;
 
 import javax.annotation.processing.Filer;
@@ -101,6 +102,15 @@ public class ComponentProcessorUseCase {
         Set<TypeElement> uniqueTargetClasses = new LinkedHashSet<>();
         boolean isValid = true;
 
+        // 1. Initial Interface Validation (Component-level rules)
+        ValidationContext initialCtx = new ValidationContext(interfaceElement, null, null, elements, types);
+        if (!runRules(criticalRules.stream()
+                .filter(r -> r instanceof ComponentInterfaceHierarchyRule)
+                .toList(), initialCtx)) {
+            isValid = false;
+        }
+
+        // 2. Method-level Validation
         for (Element enclosed : interfaceElement.getEnclosedElements()) {
             if (enclosed instanceof ExecutableElement method) {
                 Optional<TypeElement> target = ProcessorUtils.getDelegateTargetElement(method, types);
@@ -109,7 +119,10 @@ public class ComponentProcessorUseCase {
 
                 ValidationContext ctx = new ValidationContext(interfaceElement, method, target.get(), elements, types);
 
-                if (!runRules(criticalRules, ctx)) {
+                // Run critical rules that are NOT component-level (method-level critical rules)
+                if (!runRules(criticalRules.stream()
+                        .filter(r -> !(r instanceof ComponentInterfaceHierarchyRule))
+                        .toList(), ctx)) {
                     isValid = false;
                     continue;
                 }
