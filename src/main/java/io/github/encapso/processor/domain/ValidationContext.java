@@ -1,5 +1,6 @@
 package io.github.encapso.processor.domain;
 
+import javax.annotation.processing.RoundEnvironment;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
@@ -13,5 +14,6 @@ public record ValidationContext(
         ExecutableElement methodElement,
         TypeElement targetElement,
         Elements elements,
-        Types types
+        Types types,
+        RoundEnvironment roundEnv
 ) {}

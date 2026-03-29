@@ -1,5 +1,6 @@
 package io.github.encapso.processor.domain;
 
+import com.squareup.javapoet.TypeName;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeMirror;
 import java.util.List;
@@ -12,7 +13,8 @@ import java.util.Map;
 public record DependencyGraph(
         List<ExternalDependency> externalDependencies,
         List<InstantiationStep> instantiationSteps,
-        Map<TypeElement, String> tcInstanceNames
+        Map<TypeElement, String> tcInstanceNames,
+        Map<TypeElement, TypeName> tcInstanceTypes
 ) {
     /** The source of a dependency (where it comes from). */
     public enum DependencyKind {

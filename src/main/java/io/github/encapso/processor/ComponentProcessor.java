@@ -1,16 +1,19 @@
 package io.github.encapso.processor;
 
 import io.github.encapso.Component;
+import io.github.encapso.processor.domain.BoundaryRegistry;
 import io.github.encapso.processor.domain.Reporter;
 import io.github.encapso.processor.infrastructure.JavaPoetBuilderGenerator;
 import io.github.encapso.processor.infrastructure.JavaPoetFacadeGenerator;
 import io.github.encapso.processor.infrastructure.MessagerReporter;
-import io.github.encapso.processor.domain.BoundaryRegistry;
 import io.github.encapso.processor.usecase.ComponentBoundaryEnforcerUseCase;
 import io.github.encapso.processor.usecase.ComponentProcessorUseCase;
 import io.github.encapso.processor.usecase.DependencyAnalyzer;
+import io.github.encapso.processor.usecase.MetadataResolver;
+import io.github.encapso.processor.usecase.PublicTypeScanner;
 import io.github.encapso.processor.validation.BoundaryTypeVisibilityRule;
 import io.github.encapso.processor.validation.ComponentInterfaceHierarchyRule;
+import io.github.encapso.processor.validation.SingleComponentPerPackageRule;
 import io.github.encapso.processor.validation.TargetClassVisibilityRule;
 import io.github.encapso.processor.validation.TargetMethodSignatureRule;
 
@@ -47,9 +50,20 @@ public class ComponentProcessor extends AbstractProcessor {
 
         DependencyAnalyzer dependencyAnalyzer = new DependencyAnalyzer(elements);
 
-        this.componentUseCase = new ComponentProcessorUseCase(
-                List.of(new TargetClassVisibilityRule(), new ComponentInterfaceHierarchyRule()),
+        MetadataResolver metadataResolver = new MetadataResolver(
+                List.of(new TargetClassVisibilityRule(),
+                        new ComponentInterfaceHierarchyRule(),
+                        new SingleComponentPerPackageRule()),
                 List.of(new TargetMethodSignatureRule(), new BoundaryTypeVisibilityRule()),
+                elements,
+                types
+        );
+
+        PublicTypeScanner publicTypeScanner = new PublicTypeScanner(elements);
+
+        this.componentUseCase = new ComponentProcessorUseCase(
+                metadataResolver,
+                publicTypeScanner,
                 new JavaPoetFacadeGenerator(),
                 new JavaPoetBuilderGenerator(),
                 dependencyAnalyzer,

@@ -60,13 +60,22 @@ public class DependencyAnalyzer {
         // External names are already allocated in step 3
         Map<TypeElement, String> internalNames = allocateInternalInstanceNames(internalToConstructor.keySet(), externalDependencies);
 
-        // Step 5: Order internals topologically and build instantiation steps
+        // 5. Order internals topologically and build instantiation steps
         List<InstantiationStep> steps = buildInstantiationSteps(internalToConstructor.keySet(), classToParams, internalNames, externalDependencies, targetToFactory);
 
-        // 6. Map original target classes to their canonical instance names
-        Map<TypeElement, String> targetClassToInstanceName = mapTargetClassInstanceNames(targetToFactory.keySet(), internalNames);
+        // 6. Map original target classes to their canonical instance names and types
+        Map<TypeElement, String> targetClassToInstanceName = new LinkedHashMap<>();
+        Map<TypeElement, com.squareup.javapoet.TypeName> targetClassToInstanceType = new LinkedHashMap<>();
 
-        return new DependencyGraph(externalDependencies, steps, targetClassToInstanceName);
+        // We collect the types from the instantiation steps to get the resolved generics
+        for (InstantiationStep step : steps) {
+            if (baseTargets.contains(step.type())) {
+                targetClassToInstanceName.put(step.type(), step.instanceName());
+                targetClassToInstanceType.put(step.type(), com.squareup.javapoet.TypeName.get(step.targetType()));
+            }
+        }
+
+        return new io.github.encapso.processor.domain.DependencyGraph(externalDependencies, steps, targetClassToInstanceName, targetClassToInstanceType);
     }
 
     // --- Core Steps ---
@@ -162,14 +171,6 @@ public class DependencyAnalyzer {
             steps.add(new InstantiationStep(type, type.asType(), internalNames.get(type), argNames, factoryMethod));
         }
         return steps;
-    }
-
-    private Map<TypeElement, String> mapTargetClassInstanceNames(Collection<TypeElement> targetClasses, Map<TypeElement, String> typeToInstanceName) {
-        Map<TypeElement, String> mapping = new LinkedHashMap<>();
-        for (TypeElement tc : targetClasses) {
-            mapping.put(tc, typeToInstanceName.get(tc));
-        }
-        return mapping;
     }
 
     // --- Helpers ---
@@ -275,6 +276,12 @@ public class DependencyAnalyzer {
     }
 
     private boolean isInternal(TypeElement type, String componentPackage, Set<TypeElement> baseTargets) {
+        // Interfaces are never internal (must be provided externally or handled by a factory)
+        if (type.getKind().isInterface()) return false;
+
+        // Anything annotated with @Component is a boundary, not an internal implementation.
+        if (type.getAnnotation(io.github.encapso.Component.class) != null) return false;
+
         if (baseTargets.contains(type)) return true;
         
         String pkg = elements.getPackageOf(type).getQualifiedName().toString();

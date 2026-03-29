@@ -20,6 +20,8 @@ After finishing a feature or fix:
 5. After committing, inform the user: _"Committed locally. Ready to push to `develop` — shall I?"_
 6. Wait for explicit push approval before running `git push`.
 7. Before pushing to `develop`, all related not pushed commits must be squased together into one meaningful commit which describes the feature that is delivered with that commit.
+8. Always use the `Feature:` prefix for new feature commits (do NOT use `feat:`). For example: `Feature: implement sub-component isolation`.
+9. Always use the `Fix:` prefix for bug fixes (do NOT use `fix:`).
 
 ## Merging to Main
 - Only merge `develop` → `main` via a Pull Request on GitHub.

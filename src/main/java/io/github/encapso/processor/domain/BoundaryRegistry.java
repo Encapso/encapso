@@ -28,30 +28,44 @@ public class BoundaryRegistry {
     }
 
     /**
+     * Finds the "owning component boundary" for a given package.
+     * The owning boundary is the component with the longest matching package prefix.
+     */
+    private Optional<String> findMostSpecificBoundary(String subPkg) {
+        return componentPackageToAllowed.keySet().stream()
+                .filter(boundary -> isInsidePackage(subPkg, boundary))
+                .max(Comparator.comparingInt(String::length));
+    }
+
+    /**
      * If {@code referencedType} is an internal class being referenced illegally
      * from {@code callerPackage}, returns the component package name (for the error message).
      * Returns empty if the reference is legal.
      */
     public Optional<String> getViolatingComponentPackage(TypeElement referencedType, String callerPackage,
                                                          Elements elements) {
-        String refQName = referencedType.getQualifiedName().toString();
         String refPkg = elements.getPackageOf(referencedType).getQualifiedName().toString();
+        
+        // 1. Find the deepest boundary that owns this type
+        Optional<String> owningBoundary = findMostSpecificBoundary(refPkg);
+        if (owningBoundary.isEmpty()) return Optional.empty();
 
-        for (Map.Entry<String, Set<String>> entry : componentPackageToAllowed.entrySet()) {
-            String componentPkg = entry.getKey();
-            Set<String> allowed = entry.getValue();
+        // 2. Find the deepest boundary that owns the caller
+        Optional<String> callerBoundary = findMostSpecificBoundary(callerPackage);
 
-            // Is this reference even inside this component?
-            if (!isInsidePackage(refPkg, componentPkg)) continue;
-
-            // Is the caller already inside the component? → always allowed
-            if (isInsidePackage(callerPackage, componentPkg)) continue;
+        // 3. If they are in different boundaries, check for violations
+        if (!owningBoundary.equals(callerBoundary)) {
+            String refQName = referencedType.getQualifiedName().toString();
+            Set<String> allowed = componentPackageToAllowed.get(owningBoundary.get());
 
             // Is the type explicitly allowed (interface / builder / signature type)?
-            if (allowed.contains(refQName)) continue;
+            if (allowed != null && allowed.contains(refQName)) {
+                return Optional.empty();
+            }
 
-            return Optional.of(componentPkg);
+            return owningBoundary;
         }
+
         return Optional.empty();
     }
 
