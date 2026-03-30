@@ -15,6 +15,7 @@ import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -92,7 +93,13 @@ public class ComponentProcessorUseCase {
     }
 
     private void reportCircularDependency(TypeElement interfaceElement, CircularDependencyException e) {
-        String cyclePath = e.getCycle().stream()
+        List<TypeElement> cycle = e.getCycle();
+        if (cycle.size() <= 2 && cycle.get(0).equals(cycle.get(cycle.size() - 1))) {
+            reporter.error("Self-Circular dependency detected: Target class '" + cycle.get(0).getSimpleName() + "' depends on itself via its constructor.", interfaceElement);
+            return;
+        }
+
+        String cyclePath = cycle.stream()
                 .map(te -> te.getSimpleName().toString())
                 .reduce((a, b) -> a + " -> " + b)
                 .orElse("");

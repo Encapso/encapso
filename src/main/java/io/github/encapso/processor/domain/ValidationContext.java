@@ -13,6 +13,7 @@ public record ValidationContext(
         TypeElement interfaceElement,
         ExecutableElement methodElement,
         TypeElement targetElement,
+        String factoryMethodName,
         Elements elements,
         Types types,
         RoundEnvironment roundEnv

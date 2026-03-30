@@ -69,6 +69,16 @@ public class BoundaryRegistry {
         return Optional.empty();
     }
 
+    public void registerPublicType(String pkg, String typeName) {
+        findMostSpecificBoundary(pkg).ifPresent(boundary -> 
+            componentPackageToAllowed.computeIfAbsent(boundary, k -> new HashSet<>()).add(typeName)
+        );
+    }
+
+    public boolean isPublic(String typeName) {
+        return componentPackageToAllowed.values().stream().anyMatch(set -> set.contains(typeName));
+    }
+
     public boolean isEmpty() { return componentPackageToAllowed.isEmpty(); }
 
     private boolean isInsidePackage(String pkg, String boundary) {

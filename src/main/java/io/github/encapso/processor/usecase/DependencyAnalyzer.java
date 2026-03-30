@@ -210,9 +210,7 @@ public class DependencyAnalyzer {
                 .filter(m -> m.getSimpleName().toString().equals(factoryMethodName))
                 .filter(m -> m.getModifiers().contains(javax.lang.model.element.Modifier.STATIC))
                 .max(Comparator.comparingInt(m -> m.getParameters().size()))
-                .orElseThrow(() -> new IllegalArgumentException(
-                        String.format("Static factory method '%s' not found in class %s",
-                                factoryMethodName, type.getQualifiedName())));
+                .orElse(null);
     }
 
     private List<TypeElement> topologicalSort(Set<TypeElement> classes, Map<TypeElement, List<ParamInfo>> classToParams) {

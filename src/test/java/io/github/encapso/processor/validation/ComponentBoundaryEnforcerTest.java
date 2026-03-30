@@ -328,7 +328,7 @@ class ComponentBoundaryEnforcerTest {
                     "}"
             );
 
-            assertCompilationSucceeds(apiEnum, external);
+            assertCompilationSucceeds(getInternalService(), getBillingFacade(), apiEnum, external);
         }
     }
 

@@ -50,7 +50,7 @@ public class MetadataResolver {
         boolean isValid = true;
 
         // 1. Initial Interface Validation (Component-level rules)
-        ValidationContext initialCtx = new ValidationContext(interfaceElement, null, null, elements, types, roundEnv);
+        ValidationContext initialCtx = new ValidationContext(interfaceElement, null, null, null, elements, types, roundEnv);
         if (!runRules(criticalRules.stream()
                 .filter(r -> r instanceof ComponentInterfaceHierarchyRule || r instanceof SingleComponentPerPackageRule)
                 .toList(), initialCtx, reporter)) {
@@ -64,7 +64,8 @@ public class MetadataResolver {
                 if (request.isEmpty()) continue;
 
                 TypeElement target = request.get().target();
-                ValidationContext ctx = new ValidationContext(interfaceElement, method, target, elements, types, roundEnv);
+                String factoryMethodName = request.get().factoryMethod();
+                ValidationContext ctx = new ValidationContext(interfaceElement, method, target, factoryMethodName, elements, types, roundEnv);
 
                 // Run critical rules that are NOT component-level
                 if (!runRules(criticalRules.stream()
@@ -76,7 +77,7 @@ public class MetadataResolver {
 
                 if (runRules(signatureRules, ctx, reporter)) {
                     delegateMapping.put(method, target);
-                    targetToFactory.put(target, request.get().factoryMethod());
+                    targetToFactory.put(target, factoryMethodName);
                     uniqueTargetClasses.add(target);
                 } else {
                     isValid = false;

@@ -3,6 +3,7 @@ package io.github.encapso.processor;
 import io.github.encapso.Component;
 import io.github.encapso.processor.domain.BoundaryRegistry;
 import io.github.encapso.processor.domain.Reporter;
+import io.github.encapso.processor.domain.ValidationContext;
 import io.github.encapso.processor.infrastructure.JavaPoetBuilderGenerator;
 import io.github.encapso.processor.infrastructure.JavaPoetFacadeGenerator;
 import io.github.encapso.processor.infrastructure.MessagerReporter;
@@ -16,6 +17,9 @@ import io.github.encapso.processor.validation.ComponentInterfaceHierarchyRule;
 import io.github.encapso.processor.validation.SingleComponentPerPackageRule;
 import io.github.encapso.processor.validation.TargetClassVisibilityRule;
 import io.github.encapso.processor.validation.TargetMethodSignatureRule;
+import io.github.encapso.processor.validation.TargetClassInstantiatorRule;
+import io.github.encapso.processor.validation.ApiAnnotationRule;
+import io.github.encapso.Api;
 
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.ProcessingEnvironment;
@@ -24,6 +28,8 @@ import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
 import java.util.List;
 import java.util.Set;
 
@@ -35,25 +41,32 @@ public class ComponentProcessor extends AbstractProcessor {
 
     private ComponentProcessorUseCase componentUseCase;
     private ComponentBoundaryEnforcerUseCase boundaryEnforcer;
+    private ApiAnnotationRule apiRule;
+    private Reporter reporter;
+    private Elements elements;
+    private Types types;
+    private BoundaryRegistry registry;
 
     @Override
     public synchronized void init(ProcessingEnvironment processingEnv) {
         super.init(processingEnv);
 
-        javax.lang.model.util.Elements elements = processingEnv.getElementUtils();
-        javax.lang.model.util.Types types = processingEnv.getTypeUtils();
+        this.elements = processingEnv.getElementUtils();
+        this.types = processingEnv.getTypeUtils();
         javax.annotation.processing.Filer filer = processingEnv.getFiler();
         javax.annotation.processing.Messager messager = processingEnv.getMessager();
 
-        Reporter reporter = new MessagerReporter(messager);
-        BoundaryRegistry registry = new BoundaryRegistry();
+        this.reporter = new MessagerReporter(messager);
+        this.registry = new BoundaryRegistry();
+        this.apiRule = new ApiAnnotationRule();
 
         DependencyAnalyzer dependencyAnalyzer = new DependencyAnalyzer(elements);
 
         MetadataResolver metadataResolver = new MetadataResolver(
                 List.of(new TargetClassVisibilityRule(),
-                        new ComponentInterfaceHierarchyRule(),
-                        new SingleComponentPerPackageRule()),
+                         new TargetClassInstantiatorRule(),
+                         new ComponentInterfaceHierarchyRule(),
+                         new SingleComponentPerPackageRule()),
                 List.of(new TargetMethodSignatureRule(), new BoundaryTypeVisibilityRule()),
                 elements,
                 types
@@ -92,7 +105,18 @@ public class ComponentProcessor extends AbstractProcessor {
             }
         }
 
-        // Phase 2: Enforce component boundaries across all compiled root elements
+        // Phase 2: Process all @Api annotations (validate + register boundaries)
+        for (Element element : roundEnv.getElementsAnnotatedWith(Api.class)) {
+            if (element instanceof TypeElement typeElement) {
+                ValidationContext ctx = new ValidationContext(null, null, typeElement, null, elements, types, roundEnv);
+                if (apiRule.validate(ctx, reporter)) {
+                    String pkg = elements.getPackageOf(typeElement).getQualifiedName().toString();
+                    registry.registerPublicType(pkg, typeElement.getQualifiedName().toString());
+                }
+            }
+        }
+
+        // Phase 3: Enforce component boundaries across all compiled root elements
         boundaryEnforcer.enforce(roundEnv);
 
         return true;
