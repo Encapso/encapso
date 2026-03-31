@@ -3,6 +3,7 @@ package io.github.encapso.processor.validation;
 import io.github.encapso.processor.domain.Reporter;
 import io.github.encapso.processor.domain.ValidationContext;
 import io.github.encapso.processor.domain.ValidationRule;
+import io.github.encapso.processor.domain.ValidationScope;
 
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
@@ -39,8 +40,7 @@ public class BoundaryTypeVisibilityRule implements ValidationRule {
             }
         }
 
-        return isValid;
-    }
+        return isValid; }
 
     private boolean checkTypeVisibility(TypeMirror typeMirror, TypeElement interfaceElement, 
                                         ExecutableElement methodElement, String usageDesc, Reporter reporter) {
@@ -65,5 +65,10 @@ public class BoundaryTypeVisibilityRule implements ValidationRule {
             }
         }
         return true;
+    }
+
+    @Override
+    public ValidationScope getScope() {
+        return ValidationScope.METHOD;
     }
 }

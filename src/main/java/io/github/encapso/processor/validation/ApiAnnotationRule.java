@@ -4,6 +4,7 @@ import io.github.encapso.Component;
 import io.github.encapso.processor.domain.Reporter;
 import io.github.encapso.processor.domain.ValidationContext;
 import io.github.encapso.processor.domain.ValidationRule;
+import io.github.encapso.processor.domain.ValidationScope;
 
 import javax.lang.model.element.Element;
 import javax.lang.model.element.Modifier;
@@ -55,5 +56,10 @@ public class ApiAnnotationRule implements ValidationRule {
             }
         }
         return false;
+    }
+
+    @Override
+    public ValidationScope getScope() {
+        return ValidationScope.METHOD;
     }
 }

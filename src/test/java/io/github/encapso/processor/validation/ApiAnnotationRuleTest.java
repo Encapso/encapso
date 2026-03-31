@@ -75,15 +75,20 @@ class ApiAnnotationRuleTest {
                 "package billing;",
                 "import io.github.encapso.Api;",
                 "@Api",
-                "public class PublicType {}"
+                "public class PublicType {",
+                "    public void doSomething() {}",
+                "}"
         );
 
         JavaFileObject component = JavaFileObjects.forSourceLines(
                 "billing.BillingFacade",
                 "package billing;",
                 "import io.github.encapso.Component;",
+                "import io.github.encapso.DelegateTo;",
                 "@Component",
-                "public interface BillingFacade {}"
+                "public interface BillingFacade {",
+                "    @DelegateTo(PublicType.class) void doSomething();",
+                "}"
         );
 
         Compilation compilation = javac()

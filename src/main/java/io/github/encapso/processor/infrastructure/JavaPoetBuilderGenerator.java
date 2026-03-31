@@ -71,13 +71,15 @@ public class JavaPoetBuilderGenerator extends BaseJavaPoetGenerator implements B
 
     private void addFields(TypeSpec.Builder builder, List<ExternalDependency> externalDependencies) {
         for (ExternalDependency dep : externalDependencies) {
-            // Internal storage is raw
-            builder.addField(ClassName.get(dep.type()), dep.paramName(), Modifier.PRIVATE);
+            String internalName = getInternalFieldName(dep, externalDependencies);
+            builder.addField(ClassName.get(dep.type()), internalName, Modifier.PRIVATE);
         }
     }
 
     private void addSetters(TypeSpec.Builder builder, List<ExternalDependency> externalDependencies, TypeName builderType) {
         for (ExternalDependency dep : externalDependencies) {
+            String internalName = getInternalFieldName(dep, externalDependencies);
+            
             // Use full TypeName (with generics) for setter parameter
             MethodSpec.Builder setter = MethodSpec.methodBuilder(dep.paramName())
                     .addModifiers(Modifier.PUBLIC)
@@ -86,9 +88,9 @@ public class JavaPoetBuilderGenerator extends BaseJavaPoetGenerator implements B
 
             if (dep.required()) {
                 setter.addStatement("this.$L = $T.requireNonNull($L, \"'$L' must not be null\")",
-                        dep.paramName(), Objects.class, dep.paramName(), dep.paramName());
+                        internalName, Objects.class, dep.paramName(), dep.paramName());
             } else {
-                setter.addStatement("this.$L = $L", dep.paramName(), dep.paramName());
+                setter.addStatement("this.$L = $L", internalName, dep.paramName());
             }
 
             setter.addStatement("return this");
@@ -107,14 +109,27 @@ public class JavaPoetBuilderGenerator extends BaseJavaPoetGenerator implements B
         // 1. Validate required dependencies
         for (ExternalDependency dep : graph.externalDependencies()) {
             if (dep.required()) {
+                String internalName = getInternalFieldName(dep, graph.externalDependencies());
                 buildMethod.addStatement("$T.requireNonNull($L, \"Required dependency '$L' was not provided to the builder\")",
-                        Objects.class, dep.paramName(), dep.paramName());
+                        Objects.class, internalName, dep.paramName());
             }
         }
 
         // 2. Instantiate internals in topological order (Using raw types for instantiation logic)
         for (InstantiationStep step : graph.instantiationSteps()) {
-            String args = String.join(", ", step.constructorArgs());
+            // Map constructor arguments to local instance names or builder field names
+            List<String> argExpressions = step.constructorArgs().stream()
+                    .map(argName -> {
+                        // Check if it's an external dependency in the builder
+                        return graph.externalDependencies().stream()
+                                .filter(d -> d.paramName().equals(argName))
+                                .findFirst()
+                                .map(d -> getInternalFieldName(d, graph.externalDependencies()))
+                                .orElse(argName); // Otherwise it's a local instance name
+                    })
+                    .toList();
+            
+            String args = String.join(", ", argExpressions);
             ClassName targetClass = ClassName.get(step.type());
             
             if (step.factoryMethod() != null && !step.factoryMethod().isEmpty()) {
@@ -143,5 +158,24 @@ public class JavaPoetBuilderGenerator extends BaseJavaPoetGenerator implements B
         }
 
         builder.addMethod(buildMethod.build());
+    }
+
+    private String getInternalFieldName(ExternalDependency dep, List<ExternalDependency> allDeps) {
+        long count = allDeps.stream()
+                .filter(d -> d.paramName().equals(dep.paramName()))
+                .count();
+        
+        if (count > 1) {
+            // Collision! Use type suffix to disambiguate
+            TypeName typeName = TypeName.get(dep.type());
+            String typeSuffix;
+            if (typeName instanceof ClassName cn) {
+                typeSuffix = cn.simpleName();
+            } else {
+                typeSuffix = typeName.toString().replace("[]", "Array").replaceAll("[^a-zA-Z0-9]", "_");
+            }
+            return dep.paramName() + "_" + typeSuffix;
+        }
+        return dep.paramName();
     }
 }

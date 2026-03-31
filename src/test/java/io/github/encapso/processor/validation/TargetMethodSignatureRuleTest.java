@@ -136,4 +136,15 @@ class TargetMethodSignatureRuleTest {
         assertThat(c).failed();
         assertThat(c).hadErrorContaining("does not have a method matching the signature: run()");
     }
+
+    @Test
+    @DisplayName("Should strictly fail when target signature is static")
+    void shouldFailWhenTargetMethodIsStatic() {
+        Compilation c = CompilerTestUtils.compileWithDelegate(
+                "public class Delegate { public static void run(){} }",
+                "@Component public interface Iface { @DelegateTo(Delegate.class) void run(); }"
+        );
+        assertThat(c).failed();
+        assertThat(c).hadErrorContaining("is static and cannot be used for delegation. Encapso only supports instance-based delegating.");
+    }
 }

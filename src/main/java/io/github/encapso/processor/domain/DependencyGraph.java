@@ -23,7 +23,7 @@ public record DependencyGraph(
     }
 
     /** A dependency that must be supplied externally via the builder. */
-    public record ExternalDependency(TypeMirror type, String paramName, boolean required, DependencyKind kind) {}
+    public record ExternalDependency(TypeMirror type, String paramName, String originalParamName, boolean required, DependencyKind kind) {}
 
     /** One instantiation step in topological order inside build(). */
     public record InstantiationStep(

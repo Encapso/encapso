@@ -127,8 +127,14 @@ class NestedComponentEncapsulationTest {
                 "com.foo.child.ChildComponent",
                 "package com.foo.child;",
                 "import io.github.encapso.Component;",
+                "import io.github.encapso.DelegateTo;",
                 "@Component",
-                "public interface ChildComponent {}"
+                "public interface ChildComponent {",
+                "    @DelegateTo(ChildTarget.class) void doChild();",
+                "    class ChildTarget {",
+                "        public void doChild() {}",
+                "    }",
+                "}"
         );
 
         var compilation = javac()

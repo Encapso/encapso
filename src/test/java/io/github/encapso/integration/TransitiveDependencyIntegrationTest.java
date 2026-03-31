@@ -1,6 +1,7 @@
 package io.github.encapso.integration;
 
-import io.github.encapso.integration.bookshop.*;
+import io.github.encapso.integration.bookshop.BookshopFacade;
+import io.github.encapso.integration.bookshop.BookshopFacadeBuilder;
 import io.github.encapso.integration.external.DatabaseGateway;
 import io.github.encapso.integration.external.EmailService;
 import org.junit.jupiter.api.BeforeEach;

@@ -210,6 +210,8 @@ class GenericsCompilationIntegrationTest {
         JavaFileObject implementation = JavaFileObjects.forSourceLines(
                 "repo.Implementation",
                 "package repo;",
+                "import io.github.encapso.Api;",
+                "@Api",
                 "public class Implementation implements Base {",
                 "    public String getId() { return \"impl\"; }",
                 "}"
@@ -218,6 +220,8 @@ class GenericsCompilationIntegrationTest {
         JavaFileObject repository = JavaFileObjects.forSourceLines(
                 "repo.GenericRepository",
                 "package repo;",
+                "import io.github.encapso.Api;",
+                "@Api",
                 "public class GenericRepository<T extends Base> {",
                 "    public T find(String id) { return null; }",
                 "}"
@@ -256,8 +260,12 @@ class GenericsCompilationIntegrationTest {
         // Final sanity check: Can we actually USE the generated builder in a type-safe way?
         // We'll compile a small piece of client code that uses the generated classes.
         JavaFileObject client = JavaFileObjects.forSourceLines(
-                "repo.Client",
-                "package repo;",
+                "client.Client",
+                "package client;",
+                "import repo.UserFacade;",
+                "import repo.UserFacadeBuilder;",
+                "import repo.GenericRepository;",
+                "import repo.Implementation;",
                 "public class Client {",
                 "    public void test() {",
                 "        UserFacade<Implementation> facade = UserFacadeBuilder.<Implementation>newBuilder()",

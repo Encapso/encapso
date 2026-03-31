@@ -4,6 +4,7 @@ import io.github.encapso.Component;
 import io.github.encapso.processor.domain.Reporter;
 import io.github.encapso.processor.domain.ValidationContext;
 import io.github.encapso.processor.domain.ValidationRule;
+import io.github.encapso.processor.domain.ValidationScope;
 
 import javax.lang.model.element.TypeElement;
 import java.util.List;
@@ -39,5 +40,10 @@ public class SingleComponentPerPackageRule implements ValidationRule {
         }
 
         return true;
+    }
+
+    @Override
+    public ValidationScope getScope() {
+        return ValidationScope.COMPONENT;
     }
 }

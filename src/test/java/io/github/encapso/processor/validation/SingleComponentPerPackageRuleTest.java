@@ -19,8 +19,12 @@ class SingleComponentPerPackageRuleTest {
                 "io.github.encapso.ComponentA",
                 "package io.github.encapso;",
                 "import io.github.encapso.Component;",
+                "import io.github.encapso.DelegateTo;",
                 "@Component",
-                "public interface ComponentA {}"
+                "public interface ComponentA {",
+                "    @DelegateTo(TargetA.class) void doA();",
+                "    class TargetA { public void doA() {} }",
+                "}"
         );
 
         var compilation = javac()
@@ -37,15 +41,23 @@ class SingleComponentPerPackageRuleTest {
                 "io.github.encapso.ComponentA",
                 "package io.github.encapso;",
                 "import io.github.encapso.Component;",
+                "import io.github.encapso.DelegateTo;",
                 "@Component",
-                "public interface ComponentA {}"
+                "public interface ComponentA {",
+                "    @DelegateTo(TargetA.class) void doA();",
+                "    class TargetA { public void doA() {} }",
+                "}"
         );
         JavaFileObject componentB = JavaFileObjects.forSourceLines(
                 "io.github.encapso.ComponentB",
                 "package io.github.encapso;",
                 "import io.github.encapso.Component;",
+                "import io.github.encapso.DelegateTo;",
                 "@Component",
-                "public interface ComponentB {}"
+                "public interface ComponentB {",
+                "    @DelegateTo(TargetB.class) void doB();",
+                "    class TargetB { public void doB() {} }",
+                "}"
         );
 
         var compilation = javac()
@@ -63,15 +75,23 @@ class SingleComponentPerPackageRuleTest {
                 "io.github.encapso.Parent",
                 "package io.github.encapso;",
                 "import io.github.encapso.Component;",
+                "import io.github.encapso.DelegateTo;",
                 "@Component",
-                "public interface Parent {}"
+                "public interface Parent {",
+                "    @DelegateTo(TargetParent.class) void doParent();",
+                "    class TargetParent { public void doParent() {} }",
+                "}"
         );
         JavaFileObject child = JavaFileObjects.forSourceLines(
                 "io.github.encapso.sub.Child",
                 "package io.github.encapso.sub;",
                 "import io.github.encapso.Component;",
+                "import io.github.encapso.DelegateTo;",
                 "@Component",
-                "public interface Child {}"
+                "public interface Child {",
+                "    @DelegateTo(TargetChild.class) void doChild();",
+                "    class TargetChild { public void doChild() {} }",
+                "}"
         );
 
         var compilation = javac()

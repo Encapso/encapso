@@ -1,6 +1,7 @@
 package io.github.encapso.integration;
 
-import io.github.encapso.integration.nullsafety.*;
+import io.github.encapso.integration.nullsafety.NullSafetyFacade;
+import io.github.encapso.integration.nullsafety.NullSafetyFacadeBuilder;
 import io.github.encapso.integration.external.DepA;
 import io.github.encapso.integration.external.DepB;
 import io.github.encapso.integration.external.DepC;

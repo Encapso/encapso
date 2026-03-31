@@ -43,4 +43,57 @@ public class ProcessorUtils {
             return Optional.ofNullable(e.getTypeMirror());
         }
     }
+
+    /**
+     * Checks if an element (method or constructor) is visible to the component interface.
+     * Visibility rules:
+     * 1. Public is always visible.
+     * 2. Private is never visible.
+     * 3. Protected/Package-private are visible only if in the same package as the interface.
+     */
+    public static boolean isVisible(javax.lang.model.element.Element element, 
+                                    javax.lang.model.element.TypeElement interfaceElement, 
+                                    javax.lang.model.util.Elements elements) {
+        java.util.Set<javax.lang.model.element.Modifier> modifiers = element.getModifiers();
+        if (modifiers.contains(javax.lang.model.element.Modifier.PUBLIC)) return true;
+        if (modifiers.contains(javax.lang.model.element.Modifier.PRIVATE)) return false;
+
+        // Protected or Package-private: only if in the same package
+        String interfacePkg = elements.getPackageOf(interfaceElement).getQualifiedName().toString();
+        String elementPkg = elements.getPackageOf(element).getQualifiedName().toString();
+        return interfacePkg.equals(elementPkg);
+    }
+
+    /**
+     * Checks if the element is annotated with jakarta.inject.Inject.
+     */
+    public static boolean isInjectAnnotated(javax.lang.model.element.Element element) {
+        for (javax.lang.model.element.AnnotationMirror am : element.getAnnotationMirrors()) {
+            String fqn = am.getAnnotationType().asElement().toString();
+            if (fqn.equals("jakarta.inject.Inject")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Converts a TypeMirror to a TypeElement if possible.
+     */
+    public static javax.lang.model.element.TypeElement toTypeElement(javax.lang.model.type.TypeMirror mirror) {
+        if (mirror instanceof javax.lang.model.type.DeclaredType dt && 
+            dt.asElement() instanceof javax.lang.model.element.TypeElement te) {
+            return te;
+        }
+        return null;
+    }
+
+    /**
+     * Converts a string to camelCase.
+     */
+    public static String camelCase(String name) {
+        if (name == null || name.isEmpty()) return name;
+        if (name.length() == 1) return name.toLowerCase();
+        return Character.toLowerCase(name.charAt(0)) + name.substring(1);
+    }
 }

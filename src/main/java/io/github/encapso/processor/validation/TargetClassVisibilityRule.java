@@ -3,6 +3,7 @@ package io.github.encapso.processor.validation;
 import io.github.encapso.processor.domain.Reporter;
 import io.github.encapso.processor.domain.ValidationContext;
 import io.github.encapso.processor.domain.ValidationRule;
+import io.github.encapso.processor.domain.ValidationScope;
 
 import javax.lang.model.element.Modifier;
 
@@ -37,5 +38,10 @@ public class TargetClassVisibilityRule implements ValidationRule {
         }
 
         return true;
+    }
+
+    @Override
+    public ValidationScope getScope() {
+        return ValidationScope.METHOD;
     }
 }

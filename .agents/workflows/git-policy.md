@@ -22,6 +22,7 @@ After finishing a feature or fix:
 7. Before pushing to `develop`, all related not pushed commits must be squased together into one meaningful commit which describes the feature that is delivered with that commit.
 8. Always use the `Feature:` prefix for new feature commits (do NOT use `feat:`). For example: `Feature: implement sub-component isolation`.
 9. Always use the `Fix:` prefix for bug fixes (do NOT use `fix:`).
+10. Always use the `Refactor:` prefix for refactoring tasks.
 
 ## Merging to Main
 - Only merge `develop` → `main` via a Pull Request on GitHub.

@@ -79,7 +79,7 @@ public class ComponentProcessorUseCase {
 
             // Phase 4: Boundary Registration
             Set<String> publicTypes = publicTypeScanner.scan(interfaceElement, componentPackage, roundEnv);
-            boundaryRegistry.register(componentPackage, publicTypes);
+            boundaryRegistry.register(componentPackage, interfaceElement.getQualifiedName().toString(), publicTypes);
 
         } catch (CircularDependencyException e) {
             reportCircularDependency(interfaceElement, e);

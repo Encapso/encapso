@@ -1,6 +1,7 @@
 package io.github.encapso.integration;
 
-import io.github.encapso.integration.ecommerce.*;
+import io.github.encapso.integration.ecommerce.ECommerceFacade;
+import io.github.encapso.integration.ecommerce.ECommerceFacadeBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;

@@ -1,7 +1,8 @@
 package io.github.encapso.integration;
 
 import io.github.encapso.integration.external.ExternalDep;
-import io.github.encapso.integration.named.*;
+import io.github.encapso.integration.named.NamedFacade;
+import io.github.encapso.integration.named.NamedFacadeBuilder;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 

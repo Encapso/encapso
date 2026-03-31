@@ -3,9 +3,12 @@ package io.github.encapso.processor.validation;
 import io.github.encapso.processor.domain.Reporter;
 import io.github.encapso.processor.domain.ValidationContext;
 import io.github.encapso.processor.domain.ValidationRule;
+import io.github.encapso.processor.domain.ValidationScope;
 
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.type.TypeMirror;
+import javax.lang.model.element.Modifier;
 import javax.lang.model.type.TypeMirror;
 import java.util.List;
 
@@ -13,25 +16,43 @@ public class TargetMethodSignatureRule implements ValidationRule {
 
     @Override
     public boolean validate(ValidationContext context, Reporter reporter) {
-        if (!hasMatchingMethodSignature(context)) {
-            String errorMessage = String.format(
-                    "The target class %s does not have a method matching the signature: %s",
-                    context.targetElement().getSimpleName(), context.methodElement().toString());
-            reporter.error(errorMessage, context.methodElement());
+        MatchResult result = findMatch(context);
+        
+        if (result == MatchResult.MATCH) return true;
+
+        if (result == MatchResult.STATIC_FOUND) {
+            reporter.error(String.format("The target method %s in class %s is static and cannot be used for delegation. Encapso only supports instance-based delegating.",
+                    context.methodElement().getSimpleName(), context.targetElement().getSimpleName()), context.methodElement());
             return false;
         }
-        return true;
+
+        String errorMessage = String.format(
+                "The target class %s does not have a method matching the signature: %s",
+                context.targetElement().getSimpleName(), context.methodElement().toString());
+        reporter.error(errorMessage, context.methodElement());
+        return false;
     }
 
-    private boolean hasMatchingMethodSignature(ValidationContext context) {
+    private enum MatchResult {
+        NOT_FOUND,
+        STATIC_FOUND,
+        MATCH
+    }
+
+    private MatchResult findMatch(ValidationContext context) {
+        boolean staticMatchFound = false;
         for (Element targetEnclosed : context.targetElement().getEnclosedElements()) {
             if (targetEnclosed instanceof ExecutableElement targetMethod) {
                 if (isMethodSignatureMatch(context.methodElement(), targetMethod, context)) {
-                    return true;
+                    if (targetMethod.getModifiers().contains(Modifier.STATIC)) {
+                        staticMatchFound = true;
+                    } else {
+                        return MatchResult.MATCH;
+                    }
                 }
             }
         }
-        return false;
+        return staticMatchFound ? MatchResult.STATIC_FOUND : MatchResult.NOT_FOUND;
     }
 
     private boolean isMethodSignatureMatch(ExecutableElement sourceMethod, ExecutableElement targetMethod, ValidationContext context) {
@@ -98,5 +119,10 @@ public class TargetMethodSignatureRule implements ValidationRule {
         }
 
         return false;
+    }
+
+    @Override
+    public ValidationScope getScope() {
+        return ValidationScope.METHOD;
     }
 }

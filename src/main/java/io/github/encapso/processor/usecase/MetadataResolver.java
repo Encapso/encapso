@@ -4,8 +4,7 @@ import io.github.encapso.processor.ProcessorUtils;
 import io.github.encapso.processor.domain.Reporter;
 import io.github.encapso.processor.domain.ValidationContext;
 import io.github.encapso.processor.domain.ValidationRule;
-import io.github.encapso.processor.validation.ComponentInterfaceHierarchyRule;
-import io.github.encapso.processor.validation.SingleComponentPerPackageRule;
+import io.github.encapso.processor.domain.ValidationScope;
 
 import javax.annotation.processing.RoundEnvironment;
 import javax.lang.model.element.Element;
@@ -21,17 +20,18 @@ import java.util.*;
  */
 public class MetadataResolver {
 
-    private final List<ValidationRule> criticalRules;
-    private final List<ValidationRule> signatureRules;
+    private final List<ValidationRule> componentRules;
+    private final List<ValidationRule> methodRules;
     private final Elements elements;
     private final Types types;
 
-    public MetadataResolver(List<ValidationRule> criticalRules,
-                            List<ValidationRule> signatureRules,
-                            Elements elements,
-                            Types types) {
-        this.criticalRules = criticalRules;
-        this.signatureRules = signatureRules;
+    public MetadataResolver(List<ValidationRule> rules, Elements elements, Types types) {
+        this.componentRules = rules.stream()
+                .filter(r -> r.getScope() == ValidationScope.COMPONENT)
+                .toList();
+        this.methodRules = rules.stream()
+                .filter(r -> r.getScope() == ValidationScope.METHOD)
+                .toList();
         this.elements = elements;
         this.types = types;
     }
@@ -51,9 +51,7 @@ public class MetadataResolver {
 
         // 1. Initial Interface Validation (Component-level rules)
         ValidationContext initialCtx = new ValidationContext(interfaceElement, null, null, null, elements, types, roundEnv);
-        if (!runRules(criticalRules.stream()
-                .filter(r -> r instanceof ComponentInterfaceHierarchyRule || r instanceof SingleComponentPerPackageRule)
-                .toList(), initialCtx, reporter)) {
+        if (!runRules(componentRules, initialCtx, reporter)) {
             isValid = false;
         }
 
@@ -67,15 +65,7 @@ public class MetadataResolver {
                 String factoryMethodName = request.get().factoryMethod();
                 ValidationContext ctx = new ValidationContext(interfaceElement, method, target, factoryMethodName, elements, types, roundEnv);
 
-                // Run critical rules that are NOT component-level
-                if (!runRules(criticalRules.stream()
-                        .filter(r -> !(r instanceof ComponentInterfaceHierarchyRule))
-                        .toList(), ctx, reporter)) {
-                    isValid = false;
-                    continue;
-                }
-
-                if (runRules(signatureRules, ctx, reporter)) {
+                if (runRules(methodRules, ctx, reporter)) {
                     delegateMapping.put(method, target);
                     targetToFactory.put(target, factoryMethodName);
                     uniqueTargetClasses.add(target);
@@ -84,6 +74,12 @@ public class MetadataResolver {
                 }
             }
         }
+        
+        if (isValid && delegateMapping.isEmpty()) {
+            reporter.error("@Component must have at least one method annotated with @DelegateTo", interfaceElement);
+            isValid = false;
+        }
+
         return new ComponentMetadata(isValid, delegateMapping, targetToFactory, uniqueTargetClasses);
     }
 

@@ -21,8 +21,11 @@ public class BoundaryRegistry {
 
     /** component package → set of allowed fully-qualified type names */
     private final Map<String, Set<String>> componentPackageToAllowed = new LinkedHashMap<>();
+    /** component package → fully-qualified component interface name */
+    private final Map<String, String> componentPackageToInterface = new LinkedHashMap<>();
 
-    public void register(String componentPackage, Set<String> allowedNames) {
+    public void register(String componentPackage, String interfaceFqn, Set<String> allowedNames) {
+        componentPackageToInterface.put(componentPackage, interfaceFqn);
         componentPackageToAllowed.merge(componentPackage, new LinkedHashSet<>(allowedNames),
                 (existing, incoming) -> { existing.addAll(incoming); return existing; });
     }
@@ -39,23 +42,33 @@ public class BoundaryRegistry {
 
     /**
      * If {@code referencedType} is an internal class being referenced illegally
-     * from {@code callerPackage}, returns the component package name (for the error message).
+     * from {@code callerPackage}, returns a {@link Violation} (for the error message).
      * Returns empty if the reference is legal.
      */
-    public Optional<String> getViolatingComponentPackage(TypeElement referencedType, String callerPackage,
-                                                         Elements elements) {
-        String refPkg = elements.getPackageOf(referencedType).getQualifiedName().toString();
+    public Optional<Violation> getViolatingComponentPackage(TypeElement referencedType, String callerPackage,
+                                                          String callerFqn, Elements elements) {
+        String refQName = referencedType.getQualifiedName().toString();
+        return getViolatingComponentPackageForFqn(refQName, callerPackage, callerFqn, elements);
+    }
+
+    public Optional<Violation> getViolatingComponentPackageForFqn(String refQName, String callerPackage,
+                                                                   String callerFqn, Elements elements) {
+        String refPkg = refQName.contains(".") ? refQName.substring(0, refQName.lastIndexOf('.')) : "";
         
         // 1. Find the deepest boundary that owns this type
         Optional<String> owningBoundary = findMostSpecificBoundary(refPkg);
-        if (owningBoundary.isEmpty()) return Optional.empty();
+        if (owningBoundary.isEmpty() || 
+            refQName.equals("io.github.encapso.Component") || 
+            refQName.equals("io.github.encapso.DelegateTo") || 
+            refQName.equals("io.github.encapso.Api")) {
+            return Optional.empty();
+        }
 
         // 2. Find the deepest boundary that owns the caller
         Optional<String> callerBoundary = findMostSpecificBoundary(callerPackage);
 
         // 3. If they are in different boundaries, check for violations
         if (!owningBoundary.equals(callerBoundary)) {
-            String refQName = referencedType.getQualifiedName().toString();
             Set<String> allowed = componentPackageToAllowed.get(owningBoundary.get());
 
             // Is the type explicitly allowed (interface / builder / signature type)?
@@ -63,11 +76,29 @@ public class BoundaryRegistry {
                 return Optional.empty();
             }
 
-            return owningBoundary;
+            return owningBoundary.map(pkg -> new Violation(pkg, false));
+        }
+
+        // 4. Restriction: Internal classes cannot refer to their own component interface
+        // Exception: The generated Builder (and the Facade implementation) are allowed.
+        String boundary = owningBoundary.get();
+        String interfaceFqn = componentPackageToInterface.get(boundary);
+        boolean isInterfaceRef = refQName.equals(interfaceFqn);
+        boolean isBuilderRef = refQName.endsWith("Builder") && componentPackageToAllowed.get(boundary).contains(refQName);
+
+        if (isInterfaceRef || isBuilderRef) {
+            // Exceptions: Builders, Impls and Tests are allowed to refer to the interface.
+            if (callerFqn.endsWith("Builder") || callerFqn.endsWith("Impl") || 
+                callerFqn.endsWith("Test") || callerFqn.endsWith("IT")) {
+                return Optional.empty();
+            }
+            return Optional.of(new Violation(boundary, true));
         }
 
         return Optional.empty();
     }
+
+    public record Violation(String componentPackage, boolean isSelfReference) {}
 
     public void registerPublicType(String pkg, String typeName) {
         findMostSpecificBoundary(pkg).ifPresent(boundary -> 
@@ -80,6 +111,8 @@ public class BoundaryRegistry {
     }
 
     public boolean isEmpty() { return componentPackageToAllowed.isEmpty(); }
+
+    public int getBoundariesCount() { return componentPackageToAllowed.size(); }
 
     private boolean isInsidePackage(String pkg, String boundary) {
         return pkg.equals(boundary) || pkg.startsWith(boundary + ".");

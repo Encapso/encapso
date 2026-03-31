@@ -1,6 +1,7 @@
 package io.github.encapso.integration;
 
-import io.github.encapso.integration.simple.*;
+import io.github.encapso.integration.simple.MyFacade;
+import io.github.encapso.integration.simple.MyFacadeBuilder;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
