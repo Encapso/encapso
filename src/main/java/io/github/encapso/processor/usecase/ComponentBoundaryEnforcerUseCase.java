@@ -1,6 +1,7 @@
 package io.github.encapso.processor.usecase;
 
-import io.github.encapso.processor.domain.BoundaryRegistry;
+import io.github.encapso.engine.EncapsoEngine;
+import io.github.encapso.engine.EncapsoType;
 import io.github.encapso.processor.domain.Reporter;
 import com.sun.source.tree.*;
 import com.sun.source.util.TreePathScanner;
@@ -18,53 +19,40 @@ import javax.lang.model.util.Elements;
 import javax.lang.model.util.ElementScanner14;
 
 /**
- * Scans every compiled root element for illegal references to internal component classes.
- *
- * <p>A reference is illegal when:
- * <ul>
- *   <li>The referenced type lives inside a component package</li>
- *   <li>The caller lives outside that component package</li>
- *   <li>The referenced type is NOT in the allowed set (interface, builder, signature types, @Api)</li>
- * </ul>
+ * Javac implementation of the Encapso boundary enforcer.
+ * This class serves as the 'Eyes' for the agnostic EncapsoEngine.
  */
 public class ComponentBoundaryEnforcerUseCase {
 
-    private final BoundaryRegistry registry;
+    private final EncapsoEngine engine;
     private final Reporter reporter;
     private final Elements elements;
     private final Trees trees;
 
-    public ComponentBoundaryEnforcerUseCase(BoundaryRegistry registry, Reporter reporter,
+    public ComponentBoundaryEnforcerUseCase(EncapsoEngine engine, Reporter reporter,
                                              Elements elements, Trees trees) {
-        this.registry = registry;
+        this.engine = engine;
         this.reporter = reporter;
         this.elements = elements;
         this.trees = trees;
     }
 
     public void enforce(RoundEnvironment roundEnv) {
-        if (registry.isEmpty()) return;
-
         BoundaryScanner elementScanner = new BoundaryScanner();
         SourceScanner treeScanner = new SourceScanner();
-        java.util.Set<com.sun.source.tree.CompilationUnitTree> scannedUnits = new java.util.HashSet<>();
+        java.util.Set<CompilationUnitTree> scannedUnits = new java.util.HashSet<>();
 
         for (Element rootElement : roundEnv.getRootElements()) {
             if (rootElement instanceof TypeElement typeElement) {
-                reporter.note("Scanning: " + typeElement.getQualifiedName());
-                // 1. Scan Element declarations (fields, method signatures)
                 elementScanner.scan(typeElement, typeElement);
 
-                // 2. Scan AST implementations (method bodies, local vars)
                 TreePath path = trees.getPath(typeElement);
                 if (path != null) {
-                    com.sun.source.tree.CompilationUnitTree unit = path.getCompilationUnit();
+                    CompilationUnitTree unit = path.getCompilationUnit();
                     treeScanner.setUnit(unit);
                     if (scannedUnits.add(unit)) {
-                        // Scan entire file (includes imports)
                         treeScanner.scan(unit, typeElement);
                     } else {
-                        // Just scan this class body (redundant but safe context switch)
                         treeScanner.scan(path, typeElement);
                     }
                 }
@@ -72,9 +60,6 @@ public class ComponentBoundaryEnforcerUseCase {
         }
     }
 
-    /**
-     * Tree scanner for inspecting the source implementation (method bodies, etc)
-     */
     private class SourceScanner extends TreePathScanner<Void, TypeElement> {
         private CompilationUnitTree currentUnit;
 
@@ -88,22 +73,10 @@ public class ComponentBoundaryEnforcerUseCase {
             String callerPkg = elements.getPackageOf(caller).getQualifiedName().toString();
             String callerFqn = caller.getQualifiedName().toString();
 
-            registry.getViolatingComponentPackageForFqn(importStr, callerPkg, callerFqn, elements)
-                .ifPresent(violation -> {
-                    String msg;
-                    if (importStr.endsWith(".*")) {
-                        msg = String.format("Wildcard imports of component package '%s' are prohibited to prevent internal type leaks. " +
-                            "Use explicit imports for public types or add @Api to the internal type if it must be public.",
-                            violation.componentPackage());
-                    } else {
-                        String simpleName = importStr.contains(".") ? importStr.substring(importStr.lastIndexOf('.') + 1) : importStr;
-                        msg = String.format("Class '%s' is an internal implementation detail of the '%s' component. " +
-                            "It cannot be used directly outside the component. " +
-                            "Use the @Component facade or its builder instead.",
-                            simpleName, violation.componentPackage());
-                    }
-                    reporter.error(msg, node, currentUnit);
-                });
+            EncapsoType refType = toEncapsoType(importStr);
+            engine.checkViolation(refType, callerPkg, callerFqn).ifPresent(v -> {
+                reporter.error(formatViolation(v, refType, caller), node, currentUnit);
+            });
 
             return super.visitImport(node, caller);
         }
@@ -136,16 +109,12 @@ public class ComponentBoundaryEnforcerUseCase {
             if (tree == null) return;
             Element element = trees.getElement(new TreePath(getCurrentPath(), tree));
             if (element instanceof TypeElement typeElement) {
-                checkTypeElement(typeElement, caller, caller, tree, currentUnit);
+                checkTypeElement(typeElement, caller, tree, currentUnit);
             }
         }
     }
 
-    /**
-     * Standard visitor for traversing elements and checking declaration types.
-     */
     private class BoundaryScanner extends ElementScanner14<Void, TypeElement> {
-
         @Override
         public Void visitType(TypeElement e, TypeElement caller) {
             checkType(e.getSuperclass(), caller, e);
@@ -173,7 +142,7 @@ public class ComponentBoundaryEnforcerUseCase {
         private void checkType(TypeMirror mirror, TypeElement caller, Element reportSite) {
             if (!(mirror instanceof DeclaredType declaredType)) return;
             if (declaredType.asElement() instanceof TypeElement referencedType) {
-                checkTypeElement(referencedType, caller, reportSite, null, null);
+                checkTypeElement(referencedType, caller, null, null);
                 for (TypeMirror arg : declaredType.getTypeArguments()) {
                     checkType(arg, caller, reportSite);
                 }
@@ -181,42 +150,46 @@ public class ComponentBoundaryEnforcerUseCase {
         }
     }
 
-    /**
-     * Unified logic for checking if a referenced type element violates component encapsulation.
-     */
-    private void checkTypeElement(TypeElement referencedType, TypeElement caller, Element reportSite, Tree reportTree, CompilationUnitTree unit) {
-        String callerPackage = elements.getPackageOf(caller).getQualifiedName().toString();
+    private void checkTypeElement(TypeElement referencedType, TypeElement caller, Tree reportTree, CompilationUnitTree unit) {
+        String callerPkg = elements.getPackageOf(caller).getQualifiedName().toString();
         String callerFqn = caller.getQualifiedName().toString();
-        String refFqn = referencedType.getQualifiedName().toString();
+        
+        EncapsoType refType = new EncapsoType(referencedType.getQualifiedName().toString(), 
+                                            elements.getPackageOf(referencedType).getQualifiedName().toString());
 
-        registry.getViolatingComponentPackageForFqn(refFqn, callerPackage, callerFqn, elements).ifPresent(violation -> {
-            String msg;
-            if (violation.isSelfReference()) {
-                msg = String.format(
-                    "Internal class '%s' cannot refer to its own component interface '%s'. " +
-                    "This maintains a strict architectural boundary between implementation and API.",
-                    getEnclosingType(reportSite).getSimpleName(),
-                    referencedType.getSimpleName());
-            } else {
-                msg = String.format(
-                    "Class '%s' is an internal implementation detail of the '%s' component. " +
-                    "It cannot be used directly outside the component. " +
-                    "Use the @Component facade or its builder instead.",
-                    referencedType.getSimpleName(), violation.componentPackage());
-            }
-
+        engine.checkViolation(refType, callerPkg, callerFqn).ifPresent(v -> {
+            String msg = formatViolation(v, refType, caller);
             if (reportTree != null && unit != null) {
                 reporter.error(msg, reportTree, unit);
             } else {
-                reporter.error(msg, reportSite);
+                reporter.error(msg, caller);
             }
         });
     }
 
-    private Element getEnclosingType(Element e) {
-        while (e != null && !(e instanceof TypeElement)) {
-            e = e.getEnclosingElement();
+    private String formatViolation(EncapsoEngine.Violation v, EncapsoType refType, Element caller) {
+        if (v.isSelfReference()) {
+            return String.format(
+                "Internal class '%s' cannot refer to its own component interface '%s'. " +
+                "This maintains a strict architectural boundary between implementation and API.",
+                caller.getSimpleName(), refType.simpleName());
         }
-        return e;
+        
+        if (refType.fqn().endsWith(".*")) {
+            return String.format("Wildcard imports of component package '%s' are prohibited to prevent internal type leaks. " +
+                "Use explicit imports for public types or add @Api to the internal type if it must be public.",
+                v.componentPackage());
+        }
+
+        return String.format(
+            "Class '%s' is an internal implementation detail of the '%s' component. " +
+            "It cannot be used directly outside the component. " +
+            "Use the @Component facade or its builder instead.",
+            refType.simpleName(), v.componentPackage());
+    }
+
+    private EncapsoType toEncapsoType(String fqn) {
+        String pkg = fqn.contains(".") ? fqn.substring(0, fqn.lastIndexOf('.')) : "";
+        return new EncapsoType(fqn, pkg);
     }
 }

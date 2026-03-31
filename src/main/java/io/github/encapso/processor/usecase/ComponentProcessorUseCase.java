@@ -1,6 +1,6 @@
 package io.github.encapso.processor.usecase;
 
-import io.github.encapso.processor.domain.BoundaryRegistry;
+import io.github.encapso.engine.EncapsoEngine;
 import io.github.encapso.processor.domain.CircularDependencyException;
 import io.github.encapso.processor.domain.DependencyGraph;
 import io.github.encapso.processor.domain.FacadeGenerator;
@@ -31,7 +31,7 @@ public class ComponentProcessorUseCase {
     private final FacadeGenerator facadeGenerator;
     private final BuilderGenerator builderGenerator;
     private final DependencyAnalyzer dependencyAnalyzer;
-    private final BoundaryRegistry boundaryRegistry;
+    private final EncapsoEngine engine;
     private final Reporter reporter;
     private final Filer filer;
     private final Elements elements;
@@ -43,7 +43,7 @@ public class ComponentProcessorUseCase {
                                      FacadeGenerator facadeGenerator,
                                      BuilderGenerator builderGenerator,
                                      DependencyAnalyzer dependencyAnalyzer,
-                                     BoundaryRegistry boundaryRegistry,
+                                     EncapsoEngine engine,
                                      Reporter reporter,
                                      Filer filer,
                                      Elements elements,
@@ -54,7 +54,7 @@ public class ComponentProcessorUseCase {
         this.facadeGenerator = facadeGenerator;
         this.builderGenerator = builderGenerator;
         this.dependencyAnalyzer = dependencyAnalyzer;
-        this.boundaryRegistry = boundaryRegistry;
+        this.engine = engine;
         this.reporter = reporter;
         this.filer = filer;
         this.elements = elements;
@@ -79,7 +79,7 @@ public class ComponentProcessorUseCase {
 
             // Phase 4: Boundary Registration
             Set<String> publicTypes = publicTypeScanner.scan(interfaceElement, componentPackage, roundEnv);
-            boundaryRegistry.register(componentPackage, interfaceElement.getQualifiedName().toString(), publicTypes);
+            engine.registerComponent(componentPackage, interfaceElement.getQualifiedName().toString(), publicTypes);
 
         } catch (CircularDependencyException e) {
             reportCircularDependency(interfaceElement, e);

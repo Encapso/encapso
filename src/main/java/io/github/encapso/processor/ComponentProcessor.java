@@ -1,7 +1,8 @@
 package io.github.encapso.processor;
 
 import io.github.encapso.Component;
-import io.github.encapso.processor.domain.BoundaryRegistry;
+import io.github.encapso.engine.EncapsoEngine;
+import io.github.encapso.engine.EncapsoEngineProvider;
 import io.github.encapso.processor.domain.Reporter;
 import io.github.encapso.processor.domain.ValidationContext;
 import io.github.encapso.processor.infrastructure.JavaPoetBuilderGenerator;
@@ -35,6 +36,7 @@ import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import java.util.List;
 import java.util.Set;
+import java.util.Collections;
 
 @SupportedAnnotationTypes({
         "io.github.encapso.Component",
@@ -49,7 +51,7 @@ public class ComponentProcessor extends AbstractProcessor {
     private Reporter reporter;
     private Elements elements;
     private Types types;
-    private BoundaryRegistry registry;
+    private EncapsoEngine engine;
     private Trees trees;
 
     @Override
@@ -61,12 +63,11 @@ public class ComponentProcessor extends AbstractProcessor {
         javax.annotation.processing.Filer filer = processingEnv.getFiler();
         javax.annotation.processing.Messager messager = processingEnv.getMessager();
 
+        this.engine = EncapsoEngineProvider.create();
         this.trees = Trees.instance(processingEnv);
         this.reporter = new MessagerReporter(messager, trees);
-        this.registry = new BoundaryRegistry();
         this.apiRule = new ApiAnnotationRule();
-        this.boundaryEnforcer = new ComponentBoundaryEnforcerUseCase(registry, reporter, elements, trees);
-
+        
         InstantiationPointSelector selector = new InstantiationPointSelector(elements);
         DependencyAnalyzer dependencyAnalyzer = new DependencyAnalyzer(elements, selector);
 
@@ -90,7 +91,7 @@ public class ComponentProcessor extends AbstractProcessor {
                 new JavaPoetFacadeGenerator(),
                 new JavaPoetBuilderGenerator(),
                 dependencyAnalyzer,
-                registry,
+                engine,
                 reporter,
                 filer,
                 elements,
@@ -98,7 +99,7 @@ public class ComponentProcessor extends AbstractProcessor {
                 messager
         );
 
-        this.boundaryEnforcer = new ComponentBoundaryEnforcerUseCase(registry, reporter, elements, trees);
+        this.boundaryEnforcer = new ComponentBoundaryEnforcerUseCase(engine, reporter, elements, trees);
     }
 
     @Override
@@ -110,29 +111,26 @@ public class ComponentProcessor extends AbstractProcessor {
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         reporter.note("Encapso Round Processing: " + roundEnv.getRootElements().size() + " root elements");
         
-        // Phase 1: Process all @Component interfaces (validate + generate + register boundaries)
+        // Phase 1: Process all @Component interfaces
         for (Element element : roundEnv.getElementsAnnotatedWith(Component.class)) {
             if (element instanceof TypeElement interfaceElement) {
                 componentUseCase.processComponent(interfaceElement, roundEnv);
             }
         }
 
-        // Phase 2: Process all @Api annotations (validate + register boundaries)
+        // Phase 2: Process all @Api annotations
         for (Element element : roundEnv.getElementsAnnotatedWith(Api.class)) {
             if (element instanceof TypeElement typeElement) {
                 ValidationContext ctx = new ValidationContext(null, null, typeElement, null, elements, types, roundEnv);
                 if (apiRule.validate(ctx, reporter)) {
                     String pkg = elements.getPackageOf(typeElement).getQualifiedName().toString();
-                    registry.registerPublicType(pkg, typeElement.getQualifiedName().toString());
+                    engine.registerPublicType(pkg, typeElement.getQualifiedName().toString());
                 }
             }
         }
 
-        if (!registry.isEmpty()) {
-            reporter.note("Encapso boundaries active: " + registry.getBoundariesCount());
-            // Phase 3: Enforce component boundaries across all compiled root elements
-            boundaryEnforcer.enforce(roundEnv);
-        }
+        // Phase 3: Enforce component boundaries across all compiled root elements
+        boundaryEnforcer.enforce(roundEnv);
 
         return false;
     }
