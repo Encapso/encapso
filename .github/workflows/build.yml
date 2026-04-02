@@ -1,0 +1,11 @@
+name: Encapso Module CI
+
+on: [push]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    uses: Encapso/encapso-parent/.github/workflows/reusable-maven-build.yml@develop
